@@ -1,0 +1,8 @@
+datasets/
+models/
+exports/
+venv/
+__pycache__/
+*.h5
+*.tflite
+*.pyc
