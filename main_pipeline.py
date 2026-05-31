@@ -122,21 +122,11 @@ class AttendancePipeline:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
     def _draw_progress(self, frame, liveness_state):
-        """Draw progress bar for liveness steps"""
-        steps = {
-            LivenessState.BLINK_PENDING: 1,
-            LivenessState.SMILE_PENDING: 2,
-            LivenessState.TURN_PENDING: 3,
-            LivenessState.VERIFIED: 3,
-        }
-        current = steps.get(liveness_state, 0)
-        labels = ["BLINK", "SMILE", "TURN"]
-        for i, label in enumerate(labels):
-            color = (0, 255, 0) if i < current else (100, 100, 100)
-            cv2.circle(frame, (100 + i * 120, 140), 20, color, -1)
-            cv2.putText(frame, label, (75 + i * 120, 175),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-
+        color = (0, 255, 0) if liveness_state == LivenessState.VERIFIED else \
+            (0, 0, 255) if liveness_state == LivenessState.FAILED else \
+                (0, 165, 255)
+        cv2.putText(frame, f"Liveness: {liveness_state.name}", (30, 130),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
 if __name__ == "__main__":
     pipeline = AttendancePipeline()

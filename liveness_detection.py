@@ -5,26 +5,21 @@ from mediapipe.tasks.python import vision
 from mediapipe import Image, ImageFormat
 import numpy as np
 from enum import Enum
-import urllib.request
 import os
 
-# Download model if not present
 MODEL_PATH = "face_landmarker.task"
 if not os.path.exists(MODEL_PATH):
     print("Downloading face landmarker model...")
-    urllib.request.urlretrieve(
-        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-        MODEL_PATH
+    os.system(
+        "curl -k -o face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
     )
     print("✅ Model downloaded!")
 
 class LivenessState(Enum):
-    IDLE = 0
-    BLINK_PENDING = 1
-    SMILE_PENDING = 2
-    TURN_PENDING = 3
-    VERIFIED = 4
-    FAILED = -1
+    IDLE     =  0
+    CHECKING =  1
+    VERIFIED =  4
+    FAILED   = -1
 
 class LivenessDetector:
     def __init__(self):
@@ -37,17 +32,25 @@ class LivenessDetector:
             output_face_blendshapes=True
         )
         self.detector = vision.FaceLandmarker.create_from_options(options)
-        self.state = LivenessState.IDLE
-        self.blink_counter = 0
-        self.state_frame_counter = 0
-        self.MAX_FRAMES_PER_STATE = 150
+        self.state         = LivenessState.IDLE
+        self.frame_counter = 0
+        self.MAX_FRAMES    = 150  # ~5 seconds
+        self.ear_history   = []
+        self.EAR_WINDOW    = 5
 
-        self.LEFT_EYE = [362, 385, 387, 263, 373, 380]
-        self.RIGHT_EYE = [33, 160, 158, 133, 153, 144]
+        # Thresholds
+        self.EAR_THRESH    = 0.20
+        self.SMILE_THRESH  = 0.48
+        self.TURN_LOW      = 0.35
+        self.TURN_HIGH     = 0.65
+
+        # Landmark indices
+        self.LEFT_EYE      = [362, 385, 387, 263, 373, 380]
+        self.RIGHT_EYE     = [33, 160, 158, 133, 153, 144]
         self.MOUTH_CORNERS = [61, 291]
-        self.LEFT_FACE = 234
-        self.RIGHT_FACE = 454
-        self.NOSE_TIP = 1
+        self.LEFT_FACE     = 234
+        self.RIGHT_FACE    = 454
+        self.NOSE_TIP      = 1
 
         print("✅ Liveness Detector ready!")
 
@@ -58,90 +61,87 @@ class LivenessDetector:
         ])
         v1 = np.linalg.norm(pts[1] - pts[5])
         v2 = np.linalg.norm(pts[2] - pts[4])
-        h = np.linalg.norm(pts[0] - pts[3])
+        h  = np.linalg.norm(pts[0] - pts[3])
         return (v1 + v2) / (2.0 * h) if h > 0 else 0
 
     def get_smile_ratio(self, landmarks, img_w, img_h):
-        left_corner = landmarks[self.MOUTH_CORNERS[0]]
+        left_corner  = landmarks[self.MOUTH_CORNERS[0]]
         right_corner = landmarks[self.MOUTH_CORNERS[1]]
-        left_face = landmarks[self.LEFT_FACE]
-        right_face = landmarks[self.RIGHT_FACE]
-        mouth_width = abs(right_corner.x - left_corner.x) * img_w
-        face_width = abs(right_face.x - left_face.x) * img_w
+        left_face    = landmarks[self.LEFT_FACE]
+        right_face   = landmarks[self.RIGHT_FACE]
+        mouth_width  = abs(right_corner.x - left_corner.x) * img_w
+        face_width   = abs(right_face.x - left_face.x) * img_w
         return mouth_width / face_width if face_width > 0 else 0
 
     def get_head_turn_ratio(self, landmarks, img_w, img_h):
-        nose = landmarks[self.NOSE_TIP]
-        left = landmarks[self.LEFT_FACE]
-        right = landmarks[self.RIGHT_FACE]
-        nose_to_left = abs(nose.x - left.x)
-        nose_to_right = abs(nose.x - right.x)
-        total = nose_to_left + nose_to_right
-        return nose_to_left / total if total > 0 else 0.5
+        nose     = landmarks[self.NOSE_TIP]
+        left     = landmarks[self.LEFT_FACE]
+        right    = landmarks[self.RIGHT_FACE]
+        to_left  = abs(nose.x - left.x)
+        to_right = abs(nose.x - right.x)
+        total    = to_left + to_right
+        return to_left / total if total > 0 else 0.5
 
     def reset(self):
-        self.state = LivenessState.IDLE
-        self.blink_counter = 0
-        self.state_frame_counter = 0
+        self.state         = LivenessState.IDLE
+        self.frame_counter = 0
+        self.ear_history   = []
 
     def start(self):
         self.reset()
-        self.state = LivenessState.BLINK_PENDING
-        print("Liveness started → Please BLINK")
+        self.state = LivenessState.CHECKING
 
     def process_frame(self, frame):
         img_h, img_w = frame.shape[:2]
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = Image(image_format=ImageFormat.SRGB, data=rgb)
-        results = self.detector.detect(mp_image)
+        results  = self.detector.detect(mp_image)
 
         if not results.face_landmarks:
             return self.state, "No face detected", None
 
+        if self.state != LivenessState.CHECKING:
+            return self.state, "✅ Alive!" if self.state == LivenessState.VERIFIED else "❌ Spoof detected!", None
+
         landmarks = results.face_landmarks[0]
-        self.state_frame_counter += 1
+        self.frame_counter += 1
 
-        if self.state_frame_counter > self.MAX_FRAMES_PER_STATE:
+        # Timeout
+        if self.frame_counter > self.MAX_FRAMES:
             self.state = LivenessState.FAILED
-            return self.state, "Timeout! Try again.", landmarks
+            return self.state, "❌ No movement — possible spoof!", None
 
+        # Compute metrics
         avg_ear = (
             self.get_ear(landmarks, self.LEFT_EYE, img_w, img_h) +
             self.get_ear(landmarks, self.RIGHT_EYE, img_w, img_h)
         ) / 2.0
         smile_ratio = self.get_smile_ratio(landmarks, img_w, img_h)
-        turn_ratio = self.get_head_turn_ratio(landmarks, img_w, img_h)
+        turn_ratio  = self.get_head_turn_ratio(landmarks, img_w, img_h)
 
-        if self.state == LivenessState.BLINK_PENDING:
-            if avg_ear < 0.2:
-                self.blink_counter += 1
-            elif self.blink_counter >= 2:
-                self.state = LivenessState.SMILE_PENDING
-                self.state_frame_counter = 0
-                self.blink_counter = 0
-                print("✅ Blink detected → Please SMILE")
-            return self.state, "Please BLINK", landmarks
+        # Smooth EAR over window
+        self.ear_history.append(avg_ear)
+        if len(self.ear_history) > self.EAR_WINDOW:
+            self.ear_history.pop(0)
 
-        elif self.state == LivenessState.SMILE_PENDING:
-            if smile_ratio > 0.48:
-                self.state = LivenessState.TURN_PENDING
-                self.state_frame_counter = 0
-                print("✅ Smile detected → Please TURN YOUR HEAD")
-            return self.state, "Please SMILE 😊", landmarks
+        blink_detected = (
+            len(self.ear_history) == self.EAR_WINDOW and
+            all(e < self.EAR_THRESH for e in self.ear_history)
+        )
+        smile_detected = smile_ratio > self.SMILE_THRESH
+        turn_detected  = turn_ratio < self.TURN_LOW or turn_ratio > self.TURN_HIGH
 
-        elif self.state == LivenessState.TURN_PENDING:
-            if turn_ratio < 0.35 or turn_ratio > 0.65:
-                self.state = LivenessState.VERIFIED
-                print("✅ Head turn detected → LIVENESS VERIFIED!")
-            return self.state, "Please TURN YOUR HEAD left or right", landmarks
+        if blink_detected or smile_detected or turn_detected:
+            self.state = LivenessState.VERIFIED
+            action = "BLINK" if blink_detected else "SMILE" if smile_detected else "TURN"
+            return self.state, f"✅ Alive! ({action})", landmarks
 
-        return self.state, "✅ Verified!", landmarks
+        return self.state, "Verifying...", landmarks
 
 
 if __name__ == "__main__":
     detector = LivenessDetector()
     detector.start()
-
     cap = cv2.VideoCapture(0)
 
     while cap.isOpened():
@@ -149,27 +149,26 @@ if __name__ == "__main__":
         if not ret:
             break
 
+        frame = cv2.flip(frame, 1)
         state, message, landmarks = detector.process_frame(frame)
 
-        color = (0, 255, 0) if state == LivenessState.VERIFIED else (0, 165, 255)
-        if state == LivenessState.FAILED:
-            color = (0, 0, 255)
+        color = (0, 255, 0)   if state == LivenessState.VERIFIED else \
+                (0, 0, 255)   if state == LivenessState.FAILED   else \
+                (0, 165, 255)
 
         cv2.putText(frame, message, (30, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
         cv2.putText(frame, f"State: {state.name}", (30, 90),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
         cv2.imshow('Liveness Detection', frame)
 
         if state == LivenessState.VERIFIED:
             cv2.waitKey(2000)
             break
-
         if state == LivenessState.FAILED:
             detector.reset()
             detector.start()
-
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
