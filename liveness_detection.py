@@ -6,6 +6,8 @@ from mediapipe import Image, ImageFormat
 import numpy as np
 from enum import Enum
 import os
+import sys
+import subprocess
 
 MODEL_PATH = "face_landmarker.task"
 if not os.path.exists(MODEL_PATH):
@@ -31,18 +33,18 @@ class LivenessDetector:
             min_tracking_confidence=0.5,
             output_face_blendshapes=True
         )
-        self.detector = vision.FaceLandmarker.create_from_options(options)
+        self.detector      = vision.FaceLandmarker.create_from_options(options)
         self.state         = LivenessState.IDLE
         self.frame_counter = 0
-        self.MAX_FRAMES    = 150  # ~5 seconds
+        self.MAX_FRAMES    = 150
         self.ear_history   = []
         self.EAR_WINDOW    = 5
 
         # Thresholds
-        self.EAR_THRESH    = 0.20
-        self.SMILE_THRESH  = 0.48
-        self.TURN_LOW      = 0.35
-        self.TURN_HIGH     = 0.65
+        self.EAR_THRESH   = 0.20
+        self.SMILE_THRESH = 0.48
+        self.TURN_LOW     = 0.35
+        self.TURN_HIGH    = 0.65
 
         # Landmark indices
         self.LEFT_EYE      = [362, 385, 387, 263, 373, 380]
@@ -51,6 +53,22 @@ class LivenessDetector:
         self.LEFT_FACE     = 234
         self.RIGHT_FACE    = 454
         self.NOSE_TIP      = 1
+
+        # Launch C++ engine as subprocess if available
+        cpp_binary = os.path.join(os.path.dirname(__file__), 'cpp', 'liveness_engine')
+        if os.path.exists(cpp_binary):
+            self.cpp_process = subprocess.Popen(
+                [cpp_binary],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True
+            )
+            self.use_cpp = True
+            print("✅ C++ engine loaded")
+        else:
+            self.cpp_process = None
+            self.use_cpp     = False
+            print("⚠️ C++ engine not found, using pure Python")
 
         print("✅ Liveness Detector ready!")
 
@@ -82,16 +100,30 @@ class LivenessDetector:
         total    = to_left + to_right
         return to_left / total if total > 0 else 0.5
 
+    def _restart_cpp(self):
+        cpp_binary = os.path.join(os.path.dirname(__file__), 'cpp', 'liveness_engine')
+        if self.cpp_process:
+            self.cpp_process.terminate()
+        self.cpp_process = subprocess.Popen(
+            [cpp_binary],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True
+        )
+
     def reset(self):
         self.state         = LivenessState.IDLE
         self.frame_counter = 0
         self.ear_history   = []
+        if self.use_cpp:
+            self._restart_cpp()
 
     def start(self):
         self.reset()
         self.state = LivenessState.CHECKING
 
     def process_frame(self, frame):
+        frame = self.apply_clahe(frame)
         img_h, img_w = frame.shape[:2]
         rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = Image(image_format=ImageFormat.SRGB, data=rgb)
@@ -101,17 +133,17 @@ class LivenessDetector:
             return self.state, "No face detected", None
 
         if self.state != LivenessState.CHECKING:
-            return self.state, "✅ Alive!" if self.state == LivenessState.VERIFIED else "❌ Spoof detected!", None
+            msg = "✅ Alive!" if self.state == LivenessState.VERIFIED else "❌ Spoof detected!"
+            return self.state, msg, None
 
         landmarks = results.face_landmarks[0]
         self.frame_counter += 1
 
-        # Timeout
         if self.frame_counter > self.MAX_FRAMES:
             self.state = LivenessState.FAILED
             return self.state, "❌ No movement — possible spoof!", None
 
-        # Compute metrics
+        # Python computes real metrics from MediaPipe landmarks
         avg_ear = (
             self.get_ear(landmarks, self.LEFT_EYE, img_w, img_h) +
             self.get_ear(landmarks, self.RIGHT_EYE, img_w, img_h)
@@ -119,24 +151,53 @@ class LivenessDetector:
         smile_ratio = self.get_smile_ratio(landmarks, img_w, img_h)
         turn_ratio  = self.get_head_turn_ratio(landmarks, img_w, img_h)
 
-        # Smooth EAR over window
-        self.ear_history.append(avg_ear)
-        if len(self.ear_history) > self.EAR_WINDOW:
-            self.ear_history.pop(0)
+        if self.use_cpp:
+            # Feed real metrics to C++ engine
+            self.cpp_process.stdin.write(
+                f"{avg_ear:.4f} {smile_ratio:.4f} {turn_ratio:.4f}\n"
+            )
+            self.cpp_process.stdin.flush()
+            result = self.cpp_process.stdout.readline().strip()
 
-        blink_detected = (
-            len(self.ear_history) == self.EAR_WINDOW and
-            all(e < self.EAR_THRESH for e in self.ear_history)
-        )
-        smile_detected = smile_ratio > self.SMILE_THRESH
-        turn_detected  = turn_ratio < self.TURN_LOW or turn_ratio > self.TURN_HIGH
+            if result.startswith("VERIFIED"):
+                action     = result.split()[1]
+                self.state = LivenessState.VERIFIED
+                return self.state, f"✅ Alive! ({action})", landmarks
+            elif result.startswith("FAILED"):
+                self.state = LivenessState.FAILED
+                return self.state, "❌ No movement — possible spoof!", landmarks
 
-        if blink_detected or smile_detected or turn_detected:
-            self.state = LivenessState.VERIFIED
-            action = "BLINK" if blink_detected else "SMILE" if smile_detected else "TURN"
-            return self.state, f"✅ Alive! ({action})", landmarks
+        else:
+            # Pure Python fallback
+            self.ear_history.append(avg_ear)
+            if len(self.ear_history) > self.EAR_WINDOW:
+                self.ear_history.pop(0)
+
+            blink_detected = (
+                len(self.ear_history) == self.EAR_WINDOW and
+                all(e < self.EAR_THRESH for e in self.ear_history)
+            )
+            smile_detected = smile_ratio > self.SMILE_THRESH
+            turn_detected  = turn_ratio < self.TURN_LOW or turn_ratio > self.TURN_HIGH
+
+            if blink_detected or smile_detected or turn_detected:
+                self.state = LivenessState.VERIFIED
+                action = "BLINK" if blink_detected else "SMILE" if smile_detected else "TURN"
+                return self.state, f"✅ Alive! ({action})", landmarks
 
         return self.state, "Verifying...", landmarks
+
+    def apply_clahe(self, frame):
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2Lab)
+        channels = list(cv2.split(lab))
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        channels[0] = clahe.apply(channels[0])
+        lab = cv2.merge(channels)
+        return cv2.cvtColor(lab, cv2.COLOR_Lab2BGR)
+
+    def __del__(self):
+        if self.use_cpp and self.cpp_process:
+            self.cpp_process.terminate()
 
 
 if __name__ == "__main__":
