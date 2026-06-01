@@ -9,6 +9,7 @@ from mediapipe.tasks.python import vision
 from mediapipe import Image, ImageFormat
 from face_recognition_engine import FaceRecognitionEngine
 from liveness_detection import LivenessDetector, LivenessState
+from storage import AttendanceStorage
 
 class PipelineState(Enum):
     IDLE = 0
@@ -21,37 +22,16 @@ class AttendancePipeline:
     def __init__(self):
         print("Initializing pipeline...")
         self.face_engine = FaceRecognitionEngine()
-        self.liveness = LivenessDetector()
-        self.state = PipelineState.IDLE
-        self.result = None
+        self.liveness    = LivenessDetector()
+        self.storage     = AttendanceStorage()  # ← replaces JSON
+        self.state       = PipelineState.IDLE
+        self.result      = None
         self.result_timer = 0
-        self.RESULT_DISPLAY_FRAMES = 90  # show result for ~3 seconds
-
-        # Attendance log
-        self.LOG_PATH = "attendance_log.json"
-        self.attendance_log = self.load_log()
-        print("✅ Pipeline ready!")
-
-    def load_log(self):
-        if os.path.exists(self.LOG_PATH):
-            with open(self.LOG_PATH, 'r') as f:
-                return json.load(f)
-        return []
-
-    def save_log(self):
-        with open(self.LOG_PATH, 'w') as f:
-            json.dump(self.attendance_log, f, indent=2)
+        self.RESULT_DISPLAY_FRAMES = 90
+        print("Pipeline ready!")
 
     def log_attendance(self, person_id, score):
-        entry = {
-            "person_id": person_id,
-            "timestamp": datetime.now().isoformat(),
-            "confidence": round(score, 4),
-            "synced": False  # AWS sync flag
-        }
-        self.attendance_log.append(entry)
-        self.save_log()
-        print(f"📝 Attendance logged: {person_id} at {entry['timestamp']}")
+        self.storage.log(person_id, score)  # ← one line, done
 
     def start(self):
         self.state = PipelineState.LIVENESS_CHECK
@@ -104,7 +84,7 @@ class AttendancePipeline:
 
         elif self.state == PipelineState.SUCCESS:
             self._draw_text(display, self.result, (30, 50), (0, 255, 0))
-            self._draw_text(display, "✅ Attendance logged!", (30, 90), (0, 255, 0))
+            self._draw_text(display, "Attendance logged!", (30, 90), (0, 255, 0))
             self.result_timer -= 1
             if self.result_timer <= 0:
                 self.state = PipelineState.IDLE
@@ -176,4 +156,4 @@ if __name__ == "__main__":
     cap.release()
     cv2.destroyAllWindows()
 
-    print(f"\n📋 Total attendance records: {len(pipeline.attendance_log)}")
+    print(f"\nTotal attendance records: {pipeline.storage.stats()['total']}")
