@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Face Attendance",
+    "slug": "face-attendance",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "attendanceapp",
+    "userInterfaceStyle": "light",
+    "plugins": [],
+    "ios": {
+      "supportsTabletMode": true,
+      "bundleIdentifier": "com.faceattendance.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used to detect face for attendance",
+        "NSLocalNetworkUsageDescription": "Used to sync data with backend server"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/android-icon-foreground.png"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ],
+      "package": "com.faceattendance.app"
+    },
+    "web": {
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#2196F3"
+    }
+  }
+}
+
