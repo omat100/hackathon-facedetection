@@ -1,0 +1,7 @@
+/Users/anand/PycharmProjects/hackathon-facedetection/cpp/build/CMakeFiles/storage_lib.dir
+/Users/anand/PycharmProjects/hackathon-facedetection/cpp/build/CMakeFiles/face_recognition_lib.dir
+/Users/anand/PycharmProjects/hackathon-facedetection/cpp/build/CMakeFiles/liveness_detector_lib.dir
+/Users/anand/PycharmProjects/hackathon-facedetection/cpp/build/CMakeFiles/face_attendance.dir
+/Users/anand/PycharmProjects/hackathon-facedetection/cpp/build/CMakeFiles/liveness_engine.dir
+/Users/anand/PycharmProjects/hackathon-facedetection/cpp/build/CMakeFiles/edit_cache.dir
+/Users/anand/PycharmProjects/hackathon-facedetection/cpp/build/CMakeFiles/rebuild_cache.dir

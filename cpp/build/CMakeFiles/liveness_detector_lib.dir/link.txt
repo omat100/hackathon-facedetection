@@ -1,0 +1,2 @@
+/usr/bin/ar qc libliveness_detector_lib.a CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.o
+/usr/bin/ranlib libliveness_detector_lib.a
