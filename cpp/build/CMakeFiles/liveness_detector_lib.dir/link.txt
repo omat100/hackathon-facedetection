@@ -1,2 +1,0 @@
-C:\msys64\ucrt64\bin\ar.exe qc libliveness_detector_lib.a CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.obj
-C:\msys64\ucrt64\bin\ranlib.exe libliveness_detector_lib.a

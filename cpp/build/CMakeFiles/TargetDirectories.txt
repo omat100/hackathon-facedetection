@@ -1,7 +1,0 @@
-D:/Projects/Face Attandence/hackathon-facedetection/cpp/build/CMakeFiles/storage_lib.dir
-D:/Projects/Face Attandence/hackathon-facedetection/cpp/build/CMakeFiles/face_recognition_lib.dir
-D:/Projects/Face Attandence/hackathon-facedetection/cpp/build/CMakeFiles/liveness_detector_lib.dir
-D:/Projects/Face Attandence/hackathon-facedetection/cpp/build/CMakeFiles/face_attendance.dir
-D:/Projects/Face Attandence/hackathon-facedetection/cpp/build/CMakeFiles/liveness_engine.dir
-D:/Projects/Face Attandence/hackathon-facedetection/cpp/build/CMakeFiles/edit_cache.dir
-D:/Projects/Face Attandence/hackathon-facedetection/cpp/build/CMakeFiles/rebuild_cache.dir
