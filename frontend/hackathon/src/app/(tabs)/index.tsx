@@ -9,12 +9,16 @@ export default function HomeScreen() {
   const [stats, setStats] = useState({ total: 0, synced: 0, unsynced: 0 });
 
   const loadData = useCallback(async () => {
-    const [fetched, s] = await Promise.all([
-      DatabaseService.getAttendance(50),
-      DatabaseService.getStats(),
-    ]);
-    setRecords(fetched);
-    setStats(s);
+    try {
+      const [fetched, s] = await Promise.all([
+        DatabaseService.getAttendance(50),
+        DatabaseService.getStats(),
+      ]);
+      setRecords(fetched);
+      setStats(s);
+    } catch (e) {
+      console.error('Failed to load attendance data:', e);
+    }
   }, []);
 
   useFocusEffect(
@@ -24,8 +28,12 @@ export default function HomeScreen() {
   );
 
   const handleSyncNow = async () => {
-    await syncService.syncAttendance();
-    await loadData();
+    try {
+      await syncService.syncAttendance();
+      await loadData();
+    } catch (e) {
+      console.error('Sync failed:', e);
+    }
   };
 
   const renderItem = ({ item }: { item: AttendanceRecord }) => (

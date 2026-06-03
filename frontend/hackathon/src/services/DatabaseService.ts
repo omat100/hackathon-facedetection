@@ -28,8 +28,13 @@ let db: SQLite.SQLiteDatabase | null = null;
 
 async function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (!db) {
-    db = await SQLite.openDatabaseAsync('attendance.db');
-    await initTables();
+    try {
+      db = await SQLite.openDatabaseAsync('attendance.db');
+      await initTables();
+    } catch (e) {
+      console.error('Database init failed:', e);
+      throw e;
+    }
   }
   return db;
 }
@@ -61,103 +66,121 @@ async function initTables(): Promise<void> {
   `);
 }
 
+async function withDb<T>(fn: (db: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
+  try {
+    const database = await getDb();
+    return await fn(database);
+  } catch (e) {
+    console.error('Database operation failed:', e);
+    throw e;
+  }
+}
+
 export const DatabaseService = {
   async logAttendance(personId: string, personName: string, confidence: number): Promise<void> {
-    const database = await getDb();
-    await database.runAsync(
-      'INSERT INTO attendance (person_id, person_name, timestamp, confidence, synced) VALUES (?, ?, ?, ?, 0)',
-      personId,
-      personName,
-      new Date().toISOString(),
-      Math.round(confidence * 10000) / 10000,
-    );
+    return withDb(async (database) => {
+      await database.runAsync(
+        'INSERT INTO attendance (person_id, person_name, timestamp, confidence, syned) VALUES (?, ?, ?, ?, 0)',
+        personId,
+        personName,
+        new Date().toISOString(),
+        Math.round(confidence * 10000) / 10000,
+      );
+    });
   },
 
   async getAttendance(limit = 50): Promise<AttendanceRecord[]> {
-    const database = await getDb();
-    const rows = await database.getAllAsync<AttendanceRecord>(
-      'SELECT * FROM attendance ORDER BY timestamp DESC LIMIT ?',
-      limit,
-    );
-    return rows;
+    return withDb(async (database) => {
+      return await database.getAllAsync<AttendanceRecord>(
+        'SELECT * FROM attendance ORDER BY timestamp DESC LIMIT ?',
+        limit,
+      );
+    });
   },
 
   async getUnsynced(): Promise<AttendanceRecord[]> {
-    const database = await getDb();
-    const rows = await database.getAllAsync<AttendanceRecord>(
-      'SELECT * FROM attendance WHERE synced = 0 ORDER BY timestamp ASC',
-    );
-    return rows;
+    return withDb(async (database) => {
+      return await database.getAllAsync<AttendanceRecord>(
+        'SELECT * FROM attendance WHERE synced = 0 ORDER BY timestamp ASC',
+      );
+    });
   },
 
   async markSynced(ids: number[]): Promise<void> {
     if (ids.length === 0) return;
-    const database = await getDb();
-    const placeholders = ids.map(() => '?').join(',');
-    await database.runAsync(
-      `UPDATE attendance SET synced = 1 WHERE id IN (${placeholders})`,
-      ...ids,
-    );
+    return withDb(async (database) => {
+      const placeholders = ids.map(() => '?').join(',');
+      await database.runAsync(
+        `UPDATE attendance SET synced = 1 WHERE id IN (${placeholders})`,
+        ...ids,
+      );
+    });
   },
 
   async purgeSynced(): Promise<number> {
-    const database = await getDb();
-    const result = await database.runAsync('DELETE FROM attendance WHERE synced = 1');
-    return result.changes;
+    return withDb(async (database) => {
+      const result = await database.runAsync('DELETE FROM attendance WHERE synced = 1');
+      return result.changes;
+    });
   },
 
   async getStats(): Promise<{ total: number; synced: number; unsynced: number }> {
-    const database = await getDb();
-    const total = await database.getFirstAsync<{ 'COUNT(*)': number }>(
-      'SELECT COUNT(*) FROM attendance',
-    );
-    const synced = await database.getFirstAsync<{ 'COUNT(*)': number }>(
-      'SELECT COUNT(*) FROM attendance WHERE synced = 1',
-    );
-    const unsynced = await database.getFirstAsync<{ 'COUNT(*)': number }>(
-      'SELECT COUNT(*) FROM attendance WHERE synced = 0',
-    );
-    return {
-      total: total?.['COUNT(*)'] ?? 0,
-      synced: synced?.['COUNT(*)'] ?? 0,
-      unsynced: unsynced?.['COUNT(*)'] ?? 0,
-    };
+    return withDb(async (database) => {
+      const total = await database.getFirstAsync<{ 'COUNT(*)': number }>(
+        'SELECT COUNT(*) FROM attendance',
+      );
+      const synced = await database.getFirstAsync<{ 'COUNT(*)': number }>(
+        'SELECT COUNT(*) FROM attendance WHERE synced = 1',
+      );
+      const unsynced = await database.getFirstAsync<{ 'COUNT(*)': number }>(
+        'SELECT COUNT(*) FROM attendance WHERE synced = 0',
+      );
+      return {
+        total: total?.['COUNT(*)'] ?? 0,
+        synced: synced?.['COUNT(*)'] ?? 0,
+        unsynced: unsynced?.['COUNT(*)'] ?? 0,
+      };
+    });
   },
 
   async savePersons(persons: Person[]): Promise<void> {
-    const database = await getDb();
-    const now = new Date().toISOString();
-    for (const p of persons) {
-      await database.runAsync(
-        'INSERT OR REPLACE INTO persons (id, name, last_sync) VALUES (?, ?, ?)',
-        p.id,
-        p.name,
-        now,
-      );
-    }
+    return withDb(async (database) => {
+      const now = new Date().toISOString();
+      for (const p of persons) {
+        await database.runAsync(
+          'INSERT OR REPLACE INTO persons (id, name, last_sync) VALUES (?, ?, ?)',
+          p.id,
+          p.name,
+          now,
+        );
+      }
+    });
   },
 
   async getPersons(): Promise<Person[]> {
-    const database = await getDb();
-    return await database.getAllAsync<Person>('SELECT * FROM persons ORDER BY name ASC');
+    return withDb(async (database) => {
+      return await database.getAllAsync<Person>('SELECT * FROM persons ORDER BY name ASC');
+    });
   },
 
   async logSync(batchId: string, count: number, success: boolean): Promise<void> {
-    const database = await getDb();
-    await database.runAsync(
-      'INSERT INTO sync_log (batch_id, timestamp, record_count, success) VALUES (?, ?, ?, ?)',
-      batchId,
-      new Date().toISOString(),
-      count,
-      success ? 1 : 0,
-    );
+    return withDb(async (database) => {
+      await database.runAsync(
+        'INSERT INTO sync_log (batch_id, timestamp, record_count, success) VALUES (?, ?, ?, ?)',
+        batchId,
+        new Date().toISOString(),
+        count,
+        success ? 1 : 0,
+      );
+    });
   },
 
   async getSyncLogs(limit = 20): Promise<SyncLog[]> {
-    const database = await getDb();
-    return await database.getAllAsync<SyncLog>(
-      'SELECT * FROM sync_log ORDER BY timestamp DESC LIMIT ?',
-      limit,
-    );
+    return withDb(async (database) => {
+      return await database.getAllAsync<SyncLog>(
+        'SELECT * FROM sync_log ORDER BY timestamp DESC LIMIT ?',
+        limit,
+      );
+    });
   },
 };
