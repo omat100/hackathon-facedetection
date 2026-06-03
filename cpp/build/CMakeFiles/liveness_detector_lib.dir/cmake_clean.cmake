@@ -1,6 +1,6 @@
 file(REMOVE_RECURSE
-  "CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.o"
-  "CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.o.d"
+  "CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.obj"
+  "CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.obj.d"
   "libliveness_detector_lib.a"
   "libliveness_detector_lib.pdb"
 )

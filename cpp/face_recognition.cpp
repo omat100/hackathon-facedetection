@@ -19,7 +19,20 @@ static const std::string SFACE_URL =
 std::string FaceRecognitionEngine::download_file(const std::string& url, const std::string& dest) {
     if (fs::exists(dest)) return dest;
     std::cout << "Downloading " << dest << " ..." << std::endl;
-    std::string cmd = "curl -k -L -o \"" + dest + "\" \"" + url + "\" 2>/dev/null";
+    
+    // Convert path format to match the native operating system slashes
+    std::string native_dest = fs::path(dest).make_preferred().string();
+    std::string cmd;
+
+#if defined(_WIN32) || defined(WIN32)
+    // Windows-friendly: Uses native curl, bypasses SSL verification issues with -k,
+    // and suppresses the download progress bars cleanly via quiet/silent flags (-s -S)
+    cmd = "curl -k -L -s -S -o \"" + native_dest + "\" \"" + url + "\"";
+#else
+    // Mac/Linux-friendly: Safely redirects standard error to /dev/null
+    cmd = "curl -k -L -o \"" + native_dest + "\" \"" + url + "\" 2>/dev/null";
+#endif
+
     int ret = std::system(cmd.c_str());
     if (ret != 0 || !fs::exists(dest)) {
         std::cerr << "Failed to download " << dest << std::endl;

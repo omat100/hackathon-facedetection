@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/Users/anand/PycharmProjects/hackathon-facedetection/cpp/face_recognition.cpp" "CMakeFiles/face_recognition_lib.dir/face_recognition.cpp.o" "gcc" "CMakeFiles/face_recognition_lib.dir/face_recognition.cpp.o.d"
+  "D:/Projects/Face Attandence/hackathon-facedetection/cpp/face_recognition.cpp" "CMakeFiles/face_recognition_lib.dir/face_recognition.cpp.obj" "gcc" "CMakeFiles/face_recognition_lib.dir/face_recognition.cpp.obj.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

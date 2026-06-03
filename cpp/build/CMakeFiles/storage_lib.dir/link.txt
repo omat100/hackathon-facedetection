@@ -1,2 +1,2 @@
-/usr/bin/ar qc libstorage_lib.a CMakeFiles/storage_lib.dir/storage.cpp.o
-/usr/bin/ranlib libstorage_lib.a
+C:\msys64\ucrt64\bin\ar.exe qc libstorage_lib.a CMakeFiles/storage_lib.dir/storage.cpp.obj
+C:\msys64\ucrt64\bin\ranlib.exe libstorage_lib.a

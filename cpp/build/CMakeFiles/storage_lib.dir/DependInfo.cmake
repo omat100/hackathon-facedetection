@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/Users/anand/PycharmProjects/hackathon-facedetection/cpp/storage.cpp" "CMakeFiles/storage_lib.dir/storage.cpp.o" "gcc" "CMakeFiles/storage_lib.dir/storage.cpp.o.d"
+  "D:/Projects/Face Attandence/hackathon-facedetection/cpp/storage.cpp" "CMakeFiles/storage_lib.dir/storage.cpp.obj" "gcc" "CMakeFiles/storage_lib.dir/storage.cpp.obj.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

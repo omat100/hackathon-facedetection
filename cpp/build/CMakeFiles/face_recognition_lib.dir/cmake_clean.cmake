@@ -1,6 +1,6 @@
 file(REMOVE_RECURSE
-  "CMakeFiles/face_recognition_lib.dir/face_recognition.cpp.o"
-  "CMakeFiles/face_recognition_lib.dir/face_recognition.cpp.o.d"
+  "CMakeFiles/face_recognition_lib.dir/face_recognition.cpp.obj"
+  "CMakeFiles/face_recognition_lib.dir/face_recognition.cpp.obj.d"
   "libface_recognition_lib.a"
   "libface_recognition_lib.pdb"
 )

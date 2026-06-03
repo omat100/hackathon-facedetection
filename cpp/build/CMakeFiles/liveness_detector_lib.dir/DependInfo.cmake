@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/Users/anand/PycharmProjects/hackathon-facedetection/cpp/liveness_detector.cpp" "CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.o" "gcc" "CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.o.d"
+  "D:/Projects/Face Attandence/hackathon-facedetection/cpp/liveness_detector.cpp" "CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.obj" "gcc" "CMakeFiles/liveness_detector_lib.dir/liveness_detector.cpp.obj.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

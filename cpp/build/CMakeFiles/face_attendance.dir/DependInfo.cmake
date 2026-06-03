@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/Users/anand/PycharmProjects/hackathon-facedetection/cpp/main_pipeline.cpp" "CMakeFiles/face_attendance.dir/main_pipeline.cpp.o" "gcc" "CMakeFiles/face_attendance.dir/main_pipeline.cpp.o.d"
+  "D:/Projects/Face Attandence/hackathon-facedetection/cpp/main_pipeline.cpp" "CMakeFiles/face_attendance.dir/main_pipeline.cpp.obj" "gcc" "CMakeFiles/face_attendance.dir/main_pipeline.cpp.obj.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

@@ -1,7 +1,9 @@
 file(REMOVE_RECURSE
-  "CMakeFiles/liveness_engine.dir/liveness_engine.cpp.o"
-  "CMakeFiles/liveness_engine.dir/liveness_engine.cpp.o.d"
-  "liveness_engine"
+  "CMakeFiles/liveness_engine.dir/liveness_engine.cpp.obj"
+  "CMakeFiles/liveness_engine.dir/liveness_engine.cpp.obj.d"
+  "libliveness_engine.dll.a"
+  "liveness_engine.exe"
+  "liveness_engine.exe.manifest"
   "liveness_engine.pdb"
 )
 
