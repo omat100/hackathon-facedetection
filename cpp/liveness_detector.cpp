@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <cmath>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -52,7 +53,7 @@ void LivenessDetector::ensure_models() {
     std::string yunet_path = download_file(YUNET_URL, "face_detection_yunet_2023mar.onnx");
     std::string lbf_path   = download_file(LBF_URL, "lbfmodel.yaml");
 
-    detector_ = cv::FaceDetectorYN::create(yunet_path, "", cv::Size(320, 320), 0.6f, 0.3f, 5000);
+    detector_ = cv::FaceDetectorYN::create(yunet_path, "", cv::Size(640, 640), 0.6f, 0.3f, 5000);
     facemark_ = cv::face::FacemarkLBF::create();
     facemark_->loadModel(lbf_path);
 }
@@ -83,12 +84,15 @@ std::vector<cv::Rect> LivenessDetector::detect_faces(const cv::Mat& image) {
     detector_->detect(image, faces);
     std::vector<cv::Rect> rects;
     for (int i = 0; i < faces.rows; i++) {
-        float x1 = faces.at<float>(i, 0);
-        float y1 = faces.at<float>(i, 1);
-        float x2 = faces.at<float>(i, 2);
-        float y2 = faces.at<float>(i, 3);
-        rects.emplace_back(cv::Point(int(x1), int(y1)),
-                           cv::Point(int(x2), int(y2)));
+        float x = faces.at<float>(i, 0);
+        float y = faces.at<float>(i, 1);
+        float fw = faces.at<float>(i, 2);
+        float fh = faces.at<float>(i, 3);
+        int x1 = std::max(0, int(x));
+        int y1 = std::max(0, int(y));
+        int x2 = std::min(w - 1, int(x + fw));
+        int y2 = std::min(h - 1, int(y + fh));
+        rects.emplace_back(x1, y1, x2 - x1, y2 - y1);
     }
     return rects;
 }
@@ -132,10 +136,7 @@ float LivenessDetector::compute_head_turn_ratio(const std::vector<cv::Point2f>& 
 
 std::tuple<LivenessState, std::string, std::vector<cv::Point2f>>
 LivenessDetector::process_frame(const cv::Mat& frame) {
-    cv::Mat rgb;
-    cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
-
-    auto rects = detect_faces(rgb);
+    auto rects = detect_faces(frame);
     if (rects.empty()) {
         return {state_, "No face detected", {}};
     }
@@ -146,6 +147,9 @@ LivenessDetector::process_frame(const cv::Mat& frame) {
         return {state_, msg, {}};
     }
 
+    // FacemarkLBF expects RGB, but detection runs on BGR
+    cv::Mat rgb;
+    cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
     std::vector<std::vector<cv::Point2f>> all_landmarks;
     if (!facemark_->fit(rgb, rects, all_landmarks) || all_landmarks.empty()) {
         return {state_, "No landmarks", {}};

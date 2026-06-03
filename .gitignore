@@ -8,3 +8,4 @@ __pycache__/
 *.pycface_landmarker.task
 face_database.json
 attendance_log.json
+cpp/build

@@ -14,9 +14,10 @@ static const std::string YUNET_URL =
     "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/"
     "face_detection_yunet_2023mar.onnx";
 
-// ArcFace recognition model (InsightFace — same as Python buffalo_sc)
-// buffalo_sc contains w600k_mbf.onnx (MobileFaceNet, 13MB)
-// buffalo_l contains w600k_r50.onnx (ResNet50, 166MB)
+// SFace recognition model (OpenCV Zoo — already bundled in the project)
+static const std::string SFACE_MODEL_NAME = "face_recognition_sface_2021dec.onnx";
+
+// ArcFace/InsightFace model download URLs (fallback if SFace not found)
 static const std::string ARCFACE_HF_URL =
     "https://huggingface.co/deepinsight/insightface/resolve/main/models/"
     "buffalo_sc/w600k_mbf.onnx";
@@ -24,9 +25,8 @@ static const std::string ARCFACE_GH_ZIP_SC =
     "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip";
 static const std::string ARCFACE_GH_ZIP_L =
     "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip";
-static const std::string ARCFACE_MODEL_NAME = "w600k_mbf.onnx";
 
-// ArcFace 112x112 reference landmarks for similarity alignment
+// 112x112 reference landmarks for similarity alignment
 static const float ARC_REF_LM[5][2] = {
     {38.2946f, 51.6963f},  // left eye
     {73.5318f, 51.5014f},  // right eye
@@ -61,8 +61,15 @@ std::string FaceRecognitionEngine::download_file(const std::string& url, const s
     return dest;
 }
 
-static std::string download_arcface_model() {
-    const std::string& name = ARCFACE_MODEL_NAME;
+static std::string find_recognition_model() {
+    // Prefer already-downloaded SFace model from the project
+    if (fs::exists(SFACE_MODEL_NAME) && fs::file_size(SFACE_MODEL_NAME) > 1000000) {
+        std::cout << "Using existing " << SFACE_MODEL_NAME << std::endl;
+        return SFACE_MODEL_NAME;
+    }
+
+    // Fallback: try the old model name
+    const std::string name = "w600k_mbf.onnx";
     if (fs::exists(name)) return name;
 
     // Try 1: HuggingFace direct download
@@ -75,7 +82,7 @@ static std::string download_arcface_model() {
     std::remove(name.c_str());
 
     // Try 2: Extract from buffalo_sc.zip (GitHub)
-    std::cout << "Downloading buffalo_sc.zip from GitHub (14MB)..." << std::endl;
+    std::cout << "Downloading buffalo_sc.zip (14MB)..." << std::endl;
     {
         std::string zip = "buffalo_sc.zip";
         cmd = "curl -k -L -o \"" + zip + "\" \"" + ARCFACE_GH_ZIP_SC + "\" 2>/dev/null";
@@ -89,53 +96,34 @@ static std::string download_arcface_model() {
         }
     }
 
-    // Try 3: Fall back to buffalo_l.zip for w600k_r50
-    std::cout << "Trying buffalo_l.zip (w600k_r50, 166MB)..." << std::endl;
-    {
-        std::string fallback_name = "w600k_r50.onnx";
-        std::string zip = "buffalo_l.zip";
-        cmd = "curl -k -L -o \"" + zip + "\" \"" + ARCFACE_GH_ZIP_L + "\" 2>/dev/null";
-        if (std::system(cmd.c_str()) == 0 && fs::exists(zip)) {
-            std::system(("unzip -o \"" + zip + "\" \"" + fallback_name + "\" 2>/dev/null").c_str());
-            std::remove(zip.c_str());
-            if (fs::exists(fallback_name)) {
-                // symlink or rename to expected name
-                std::error_code ec;
-                fs::rename(fallback_name, name, ec);
-                if (!ec && fs::exists(name)) {
-                    std::cout << "Downloaded " << name << " (from buffalo_l)" << std::endl;
-                    return name;
-                }
-            }
-        }
-    }
-
-    std::cerr << "Failed to download ArcFace model!" << std::endl;
+    std::cerr << "Failed to load recognition model!" << std::endl;
     return "";
 }
 
 void FaceRecognitionEngine::ensure_models() {
     std::string yunet_path = download_file(YUNET_URL, "face_detection_yunet_2023mar.onnx");
-    std::string arcface_path = download_arcface_model();
 
     // YuNet detector with 640x640 input for better detection
     detector_ = cv::FaceDetectorYN::create(yunet_path, "", cv::Size(640, 640), 0.5f, 0.3f, 5000);
 
-    // Load ArcFace ONNX model
-    if (arcface_path.empty() || !fs::exists(arcface_path)) {
-        std::cerr << "ArcFace model not found!" << std::endl;
+    // Load recognition model (prefer local SFace, fallback to ArcFace download)
+    std::string model_path = find_recognition_model();
+    if (model_path.empty() || !fs::exists(model_path)) {
+        std::cerr << "Recognition model not found!" << std::endl;
         return;
     }
-    arcface_net_ = cv::dnn::readNetFromONNX(arcface_path);
+    arcface_net_ = cv::dnn::readNetFromONNX(model_path);
     if (arcface_net_.empty()) {
-        std::cerr << "Failed to parse ArcFace ONNX model!" << std::endl;
+        std::cerr << "Failed to parse ONNX model: " << model_path << std::endl;
         return;
     }
     arcface_net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
     arcface_net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
 
-    // ArcFace outputs 512-dim embeddings (same as Python InsightFace)
-    expected_dim_ = 512;
+    // SFace outputs 128-dim, ArcFace outputs 512-dim
+    expected_dim_ = (model_path == SFACE_MODEL_NAME) ? 128 : 512;
+    std::cout << "Loaded recognition model: " << model_path
+              << " (dim=" << expected_dim_ << ")" << std::endl;
 }
 
 void FaceRecognitionEngine::apply_clahe(cv::Mat& frame) {
@@ -152,7 +140,7 @@ void FaceRecognitionEngine::apply_clahe(cv::Mat& frame) {
 FaceRecognitionEngine::FaceRecognitionEngine() : expected_dim_(0) {
     ensure_models();
     load_database();
-    std::cout << "Face Recognition Engine ready! (ArcFace 512-dim)" << std::endl;
+    std::cout << "Face Recognition Engine ready! (dim=" << expected_dim_ << ")" << std::endl;
 }
 
 FaceRecognitionEngine::~FaceRecognitionEngine() {}
@@ -214,22 +202,29 @@ int select_largest_face(const std::vector<cv::Mat>& faces) {
 
 cv::Mat FaceRecognitionEngine::get_embedding(const cv::Mat& aligned_face) {
     if (arcface_net_.empty()) {
-        std::cerr << "ArcFace model not loaded!" << std::endl;
+        std::cerr << "Recognition model not loaded!" << std::endl;
         return cv::Mat();
     }
 
-    // w600k_mbf preprocessing: BGR input, normalize to [-1, 1]
-    // (img - 127.5) / 127.5, same as Python InsightFace
-    cv::Mat blob = cv::dnn::blobFromImage(aligned_face, 1.0 / 127.5,
-                                           cv::Size(112, 112),
-                                           cv::Scalar(127.5, 127.5, 127.5),
-                                           false,  // swapRB: false (BGR input)
-                                           false); // don't crop
+    cv::Mat blob;
+    if (expected_dim_ == 128) {
+        // SFace preprocessing: normalize to [0, 1], no mean subtraction
+        blob = cv::dnn::blobFromImage(aligned_face, 1.0 / 255.0,
+                                       cv::Size(112, 112),
+                                       cv::Scalar(),
+                                       false, false);
+    } else {
+        // ArcFace preprocessing: (img - 127.5) / 127.5 → normalize to [-1, 1]
+        blob = cv::dnn::blobFromImage(aligned_face, 1.0 / 127.5,
+                                       cv::Size(112, 112),
+                                       cv::Scalar(127.5, 127.5, 127.5),
+                                       false, false);
+    }
 
     arcface_net_.setInput(blob);
     cv::Mat embedding = arcface_net_.forward();
 
-    // L2 normalize the embedding (same as Python)
+    // L2 normalize the embedding
     cv::normalize(embedding, embedding, 1.0, 0.0, cv::NORM_L2);
     return embedding.clone();
 }
@@ -367,10 +362,10 @@ void FaceRecognitionEngine::load_database() {
         pos = arr_end + 1;
     }
 
-    // Only accept 512-dim embeddings (ArcFace). Clear old 128-dim (SFace).
-    if (!dim_ok || (ref_dim > 0 && ref_dim != 512)) {
-        std::cout << "Database has stale embeddings (dim=" << ref_dim
-                  << "). Clearing for ArcFace 512-dim..." << std::endl;
+    // Clear database if dimension doesn't match the loaded model
+    if (!dim_ok || (ref_dim > 0 && ref_dim != expected_dim_)) {
+        std::cout << "Database dimension mismatch (db=" << ref_dim
+                  << ", model=" << expected_dim_ << "). Clearing..." << std::endl;
         database_.clear();
         save_database();
         return;
