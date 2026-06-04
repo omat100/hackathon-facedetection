@@ -69,6 +69,7 @@ void LivenessDetector::start() {
 }
 
 // ─── Face Detection with Landmarks ───────────────────────────────────────────
+// FIX: YuNet 2023mar outputs [cx, cy, w, h] center format, not [x, y, w, h].
 
 std::vector<FaceWithLandmarks>
 LivenessDetector::detect_faces_with_landmarks(const cv::Mat& image) {
@@ -87,26 +88,44 @@ LivenessDetector::detect_faces_with_landmarks(const cv::Mat& image) {
 
     std::vector<cv::Rect>  rects;
     std::vector<float>     scores;
+    std::vector<int>       valid_indices;
 
     for (int i = 0; i < num_detections; i++) {
         const float* row = data + i * 15;
         if (row[4] < 0.5f) continue;
-        cv::Rect r((int)(row[0] * scale_x), (int)(row[1] * scale_y),
-                   (int)(row[2] * scale_x), (int)(row[3] * scale_y));
-        rects.push_back(r);
+
+        // FIX: decode center-format bbox
+        float cx = row[0] * scale_x;
+        float cy = row[1] * scale_y;
+        float bw = row[2] * scale_x;
+        float bh = row[3] * scale_y;
+        int x1 = std::max(0, (int)(cx - bw / 2.0f));
+        int y1 = std::max(0, (int)(cy - bh / 2.0f));
+        int x2 = std::min(w - 1, (int)(cx + bw / 2.0f));
+        int y2 = std::min(h - 1, (int)(cy + bh / 2.0f));
+
+        rects.push_back(cv::Rect(x1, y1, x2 - x1, y2 - y1));
         scores.push_back(row[4]);
+        valid_indices.push_back(i);
     }
 
     std::vector<FaceWithLandmarks> all_faces;
-    for (int idx : nms(rects, scores, 0.3f)) {
+    for (int k : nms(rects, scores, 0.3f)) {
+        int idx = valid_indices[k];
         const float* row = data + idx * 15;
 
+        float cx = row[0] * scale_x;
+        float cy = row[1] * scale_y;
+        float bw = row[2] * scale_x;
+        float bh = row[3] * scale_y;
+        int x1 = std::max(0, (int)(cx - bw / 2.0f));
+        int y1 = std::max(0, (int)(cy - bh / 2.0f));
+        int x2 = std::min(w - 1, (int)(cx + bw / 2.0f));
+        int y2 = std::min(h - 1, (int)(cy + bh / 2.0f));
+
         FaceWithLandmarks f;
-        int x1 = std::max(0, (int)(row[0] * scale_x));
-        int y1 = std::max(0, (int)(row[1] * scale_y));
-        int x2 = std::min(w - 1, (int)((row[0] + row[2]) * scale_x));
-        int y2 = std::min(h - 1, (int)((row[1] + row[3]) * scale_y));
         f.rect        = cv::Rect(x1, y1, x2 - x1, y2 - y1);
+        // Landmarks cols 5-14: x5,y6, x7,y8, x9,y10, x11,y12, x13,y14
         f.left_eye    = cv::Point2f(row[5]  * scale_x, row[6]  * scale_y);
         f.right_eye   = cv::Point2f(row[7]  * scale_x, row[8]  * scale_y);
         f.nose        = cv::Point2f(row[9]  * scale_x, row[10] * scale_y);
@@ -138,15 +157,17 @@ float LivenessDetector::compute_head_turn_ratio(const FaceWithLandmarks& face, i
 
 std::tuple<LivenessState, std::string, std::vector<cv::Point2f>>
 LivenessDetector::process_frame(const cv::Mat& frame) {
+    // If already in a terminal state, return immediately
+    if (state_ != LivenessState::CHECKING) {
+        std::string msg = (state_ == LivenessState::VERIFIED)
+            ? "Alive!" : (state_ == LivenessState::FAILED)
+            ? "Spoof detected!" : "Idle";
+        return {state_, msg, {}};
+    }
+
     auto faces = detect_faces_with_landmarks(frame);
     if (faces.empty())
         return {state_, "No face detected", {}};
-
-    if (state_ != LivenessState::CHECKING) {
-        std::string msg = (state_ == LivenessState::VERIFIED)
-            ? "Alive!" : "Spoof detected!";
-        return {state_, msg, {}};
-    }
 
     const auto& face = faces[0];
     frame_counter_++;

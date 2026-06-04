@@ -30,6 +30,9 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
     if (self) {
         @try {
             // ── Resolve model paths from the app bundle ───────────────────
+            // NOTE: Make sure both .onnx files are added to:
+            //   1. Your Xcode target's "Copy Bundle Resources" build phase
+            //   2. The podspec s.resources line (see FaceAttendanceModule.podspec)
             NSString* yunetPath = [[NSBundle mainBundle]
                 pathForResource:@"face_detection_yunet_2023mar" ofType:@"onnx"];
             NSString* sfacePath = [[NSBundle mainBundle]
@@ -37,7 +40,8 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
 
             if (!yunetPath || !sfacePath) {
                 RCTLogError(@"[FaceAttendanceModule] ONNX models not found in bundle! "
-                            @"Make sure both .onnx files are added to Copy Bundle Resources.");
+                            @"Add both .onnx files to Copy Bundle Resources in Xcode.");
+                // Don't return early — engines stay nil, initializeModule will report the error
                 return self;
             }
 
@@ -46,6 +50,20 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
                 NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
             NSString* dbPath   = [docsDir stringByAppendingPathComponent:@"attendance.db"];
             NSString* jsonPath = [docsDir stringByAppendingPathComponent:@"face_database.json"];
+
+            // Copy bundled face_database.json to Documents on first launch
+            NSString* bundledJSON = [[NSBundle mainBundle]
+                pathForResource:@"face_database" ofType:@"json"];
+            NSFileManager* fm = [NSFileManager defaultManager];
+            if (bundledJSON && ![fm fileExistsAtPath:jsonPath]) {
+                NSError* err = nil;
+                [fm copyItemAtPath:bundledJSON toPath:jsonPath error:&err];
+                if (err) {
+                    RCTLogError(@"[FaceAttendanceModule] Failed to copy face_database.json: %@", err);
+                } else {
+                    RCTLogInfo(@"[FaceAttendanceModule] Copied bundled face_database.json to Documents");
+                }
+            }
 
             RCTLogInfo(@"[FaceAttendanceModule] YuNet  : %@", yunetPath);
             RCTLogInfo(@"[FaceAttendanceModule] SFace  : %@", sfacePath);
@@ -76,6 +94,19 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
     delete _storage;
 }
 
+// ─── Helper: check all engines are ready ────────────────────────────────────
+
+- (BOOL)enginesReady:(RCTPromiseRejectBlock)reject {
+    if (!_faceEngine || !_liveness || !_storage) {
+        reject(@"not_initialized",
+               @"C++ engines not initialized. "
+               @"Check that both .onnx files are in Copy Bundle Resources.",
+               nil);
+        return NO;
+    }
+    return YES;
+}
+
 // ─── initializeModule ────────────────────────────────────────────────────────
 
 RCT_EXPORT_METHOD(initializeModule:(RCTPromiseResolveBlock)resolve
@@ -84,7 +115,11 @@ RCT_EXPORT_METHOD(initializeModule:(RCTPromiseResolveBlock)resolve
     if (_faceEngine && _liveness && _storage) {
         resolve(@(YES));
     } else {
-        reject(@"init_error", @"C++ engines failed to initialize", nil);
+        reject(@"init_error",
+               @"C++ engines failed to initialize. "
+               @"Make sure face_detection_yunet_2023mar.onnx and "
+               @"face_recognition_sface_2021dec.onnx are in Copy Bundle Resources.",
+               nil);
     }
 }
 
@@ -94,6 +129,8 @@ RCT_EXPORT_METHOD(processBase64:(NSString*)base64
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
+    if (![self enginesReady:reject]) return;
+
     if (!base64 || base64.length == 0) {
         reject(@"invalid_input", @"base64 string is empty", nil);
         return;
@@ -101,7 +138,15 @@ RCT_EXPORT_METHOD(processBase64:(NSString*)base64
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @try {
-            NSData* data = [[NSData alloc] initWithBase64EncodedString:base64
+            // FIX: strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
+            NSString* clean = base64;
+            NSRange commaRange = [base64 rangeOfString:@","];
+            if (commaRange.location != NSNotFound &&
+                [base64 hasPrefix:@"data:"]) {
+                clean = [base64 substringFromIndex:commaRange.location + 1];
+            }
+
+            NSData* data = [[NSData alloc] initWithBase64EncodedString:clean
                             options:NSDataBase64DecodingIgnoreUnknownCharacters];
             if (!data || data.length == 0) {
                 reject(@"decode_error", @"Failed to decode base64", nil);
@@ -130,6 +175,8 @@ RCT_EXPORT_METHOD(processFaceImage:(NSString*)imagePath
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
+    if (![self enginesReady:reject]) return;
+
     if (!imagePath) {
         reject(@"invalid_path", @"Image path is null", nil);
         return;
@@ -172,6 +219,9 @@ RCT_EXPORT_METHOD(processFaceImage:(NSString*)imagePath
         if (!personId.empty()) {
             _storage->log(personId, confidence);
         }
+        // FIX: auto-reset liveness after recognition so the next person
+        // doesn't get blocked by the VERIFIED terminal state
+        _liveness->start();
     }
 
     NSMutableDictionary* result = [NSMutableDictionary dictionary];
@@ -196,6 +246,8 @@ RCT_EXPORT_METHOD(registerFace:(NSString*)base64
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
+    if (![self enginesReady:reject]) return;
+
     if (!base64 || base64.length == 0 || !personId || personId.length == 0) {
         reject(@"invalid_input", @"base64 or personId is empty", nil);
         return;
@@ -203,7 +255,15 @@ RCT_EXPORT_METHOD(registerFace:(NSString*)base64
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @try {
-            NSData* data = [[NSData alloc] initWithBase64EncodedString:base64
+            // FIX: strip data URI prefix if present
+            NSString* clean = base64;
+            NSRange commaRange = [base64 rangeOfString:@","];
+            if (commaRange.location != NSNotFound &&
+                [base64 hasPrefix:@"data:"]) {
+                clean = [base64 substringFromIndex:commaRange.location + 1];
+            }
+
+            NSData* data = [[NSData alloc] initWithBase64EncodedString:clean
                             options:NSDataBase64DecodingIgnoreUnknownCharacters];
             if (!data || data.length == 0) {
                 reject(@"decode_error", @"Failed to decode base64", nil);
@@ -241,12 +301,12 @@ RCT_EXPORT_METHOD(registerFace:(NSString*)base64
 RCT_EXPORT_METHOD(resetLiveness:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
-    if (_liveness) {
-        _liveness->start();
-        resolve(@(YES));
-    } else {
+    if (!_liveness) {
         reject(@"not_initialized", @"Liveness detector not initialized", nil);
+        return;
     }
+    _liveness->start();
+    resolve(@(YES));
 }
 
 @end
