@@ -1,0 +1,8 @@
+{
+  "name": "face-attendance-module",
+  "version": "1.0.0",
+  "description": "Local bridging module for OpenCV C++",
+  "main": "index.js",
+  "react-native": "index.js",
+  "dependencies": {}
+}
