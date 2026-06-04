@@ -80,7 +80,7 @@ export const DatabaseService = {
   async logAttendance(personId: string, personName: string, confidence: number): Promise<void> {
     return withDb(async (database) => {
       await database.runAsync(
-        'INSERT INTO attendance (person_id, person_name, timestamp, confidence, syned) VALUES (?, ?, ?, ?, 0)',
+        'INSERT INTO attendance (person_id, person_name, timestamp, confidence, synced) VALUES (?, ?, ?, ?, 0)',
         personId,
         personName,
         new Date().toISOString(),

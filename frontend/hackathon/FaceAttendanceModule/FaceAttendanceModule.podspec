@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   s.source_files = "*.{h,m,mm}", "cpp/**/*.{h,hpp,cpp}"
   s.public_header_files = "*.h", "cpp/**/*.hpp"
 
-  s.resources = "cpp/*.onnx"
+  s.resources = "cpp/*.onnx", "cpp/face_database.json"
 
   s.vendored_frameworks = "opencv2.framework"
 

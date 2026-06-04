@@ -47,6 +47,20 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
             NSString* dbPath   = [docsDir stringByAppendingPathComponent:@"attendance.db"];
             NSString* jsonPath = [docsDir stringByAppendingPathComponent:@"face_database.json"];
 
+            // Copy bundled face_database.json to Documents on first launch
+            NSString* bundledJSON = [[NSBundle mainBundle]
+                pathForResource:@"face_database" ofType:@"json"];
+            NSFileManager* fm = [NSFileManager defaultManager];
+            if (bundledJSON && ![fm fileExistsAtPath:jsonPath]) {
+                NSError* err = nil;
+                [fm copyItemAtPath:bundledJSON toPath:jsonPath error:&err];
+                if (err) {
+                    RCTLogError(@"[FaceAttendanceModule] Failed to copy face_database.json: %@", err);
+                } else {
+                    RCTLogInfo(@"[FaceAttendanceModule] Copied bundled face_database.json to Documents");
+                }
+            }
+
             RCTLogInfo(@"[FaceAttendanceModule] YuNet  : %@", yunetPath);
             RCTLogInfo(@"[FaceAttendanceModule] SFace  : %@", sfacePath);
             RCTLogInfo(@"[FaceAttendanceModule] DB     : %@", dbPath);
