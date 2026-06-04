@@ -230,7 +230,7 @@ std::pair<bool, std::string> FaceRecognitionEngine::register_face(const cv::Mat&
     cv::Mat embedding = get_embedding(aligned);
     if (embedding.empty()) return {false, "Failed to compute embedding"};
 
-    int dim = embedding.total();
+    int dim = static_cast<int>(embedding.total());
     if (!database_.empty()) {
         int existing_dim = database_.begin()->second.total();
         if (existing_dim != dim) {
@@ -263,7 +263,7 @@ FaceRecognitionEngine::recognize_face(const cv::Mat& raw_image, double threshold
 
     std::string best_match;
     double best_score = -1;
-    int query_dim = embedding.total();
+    int query_dim = static_cast<int>(embedding.total());
     int compared = 0, skipped = 0;
 
     for (const auto& [pid, stored_emb] : database_) {
