@@ -101,6 +101,8 @@ void FaceRecognitionEngine::apply_clahe(cv::Mat& frame) {
 }
 
 // ─── Face Detection ───────────────────────────────────────────────────────────
+// FIX: YuNet 2023mar outputs [cx, cy, w, h] (center format), not [x, y, w, h].
+// Landmarks are also in absolute coords after scaling.
 
 std::vector<cv::Mat> FaceRecognitionEngine::detect_faces(const cv::Mat& image) {
     int h = image.rows, w = image.cols;
@@ -118,32 +120,48 @@ std::vector<cv::Mat> FaceRecognitionEngine::detect_faces(const cv::Mat& image) {
 
     std::vector<cv::Rect> rects;
     std::vector<float> scores;
+    std::vector<int> valid_indices;
 
     for (int i = 0; i < num_detections; i++) {
         const float* row = data + i * 15;
         float conf = row[4];
         if (conf < 0.5f) continue;
 
-        cv::Rect r((int)(row[0] * scale_x),
-                   (int)(row[1] * scale_y),
-                   (int)(row[2] * scale_x),
-                   (int)(row[3] * scale_y));
+        // FIX: row[0],row[1] = cx,cy; row[2],row[3] = w,h (center format)
+        float cx = row[0] * scale_x;
+        float cy = row[1] * scale_y;
+        float bw = row[2] * scale_x;
+        float bh = row[3] * scale_y;
+        int x1 = (int)(cx - bw / 2.0f);
+        int y1 = (int)(cy - bh / 2.0f);
+
+        cv::Rect r(x1, y1, (int)bw, (int)bh);
         rects.push_back(r);
         scores.push_back(conf);
+        valid_indices.push_back(i);
     }
 
     std::vector<cv::Mat> faces;
     auto keep = nms(rects, scores, 0.3f);
-    for (int idx : keep) {
+    for (int k : keep) {
+        int idx = valid_indices[k];
         const float* row = data + idx * 15;
+
+        float cx = row[0] * scale_x;
+        float cy = row[1] * scale_y;
+        float bw = row[2] * scale_x;
+        float bh = row[3] * scale_y;
+
         cv::Mat face(1, 15, CV_32F);
-        face.at<float>(0, 0) = row[0] * scale_x;
-        face.at<float>(0, 1) = row[1] * scale_y;
-        face.at<float>(0, 2) = row[2] * scale_x;
-        face.at<float>(0, 3) = row[3] * scale_y;
+        // Store as top-left x,y for downstream alignment
+        face.at<float>(0, 0) = cx - bw / 2.0f;
+        face.at<float>(0, 1) = cy - bh / 2.0f;
+        face.at<float>(0, 2) = bw;
+        face.at<float>(0, 3) = bh;
         face.at<float>(0, 4) = row[4];
+        // Landmarks: cols 5-14, alternating x,y pairs, already absolute after scaling
         for (int j = 5; j < 15; j++)
-            face.at<float>(0, j) = (j % 2 == 0) ? row[j] * scale_x : row[j] * scale_y;
+            face.at<float>(0, j) = (j % 2 == 1) ? row[j] * scale_x : row[j] * scale_y;
         faces.push_back(face);
     }
     return faces;
@@ -178,9 +196,9 @@ static int select_largest_face(const std::vector<cv::Mat>& faces) {
     int best_idx = 0;
     float best_area = 0;
     for (int i = 0; i < (int)faces.size(); i++) {
-        float w = faces[i].at<float>(0, 2);
-        float h = faces[i].at<float>(0, 3);
-        float area = w * h;
+        float fw = faces[i].at<float>(0, 2);
+        float fh = faces[i].at<float>(0, 3);
+        float area = fw * fh;
         if (area > best_area) {
             best_area = area;
             best_idx = i;

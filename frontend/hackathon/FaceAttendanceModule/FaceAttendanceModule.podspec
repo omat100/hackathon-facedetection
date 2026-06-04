@@ -11,7 +11,9 @@ Pod::Spec.new do |s|
   s.source_files = "*.{h,m,mm}", "cpp/**/*.{h,hpp,cpp}"
   s.public_header_files = "*.h", "cpp/**/*.hpp"
 
-  s.resources = "cpp/*.onnx", "cpp/face_database.json"
+  # FIX: include .onnx files from root AND cpp/ subfolder so either
+  # location works. Also bundle face_database.json from root.
+  s.resources = "*.onnx", "face_database.json", "cpp/*.onnx", "cpp/face_database.json"
 
   s.vendored_frameworks = "opencv2.framework"
 
