@@ -1,0 +1,5 @@
+android/opencv/
+
+android/app/.cxx/
+android/app/build/
+android/.gradle/
