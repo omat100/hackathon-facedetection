@@ -1,4 +1,4 @@
-# Face Recognition Attendance — iOS
+# Face Recognition Attendance
 
 On-device face recognition and liveness detection for attendance tracking. No server required — everything runs locally on your iPhone using OpenCV's DNN module with ONNX models.
 
