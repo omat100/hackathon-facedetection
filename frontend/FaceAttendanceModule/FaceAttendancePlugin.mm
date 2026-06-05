@@ -122,12 +122,12 @@ RCT_EXPORT_METHOD(initializeModule:(RCTPromiseResolveBlock)resolve
     std::string recogMsg;
 
     if (livenessVerified) {
-        auto rec_result = _faceEngine->recognize_face(frame, 0.70);
+        auto rec_result = _faceEngine->recognize_face(frame, 0.30);
         personId   = std::get<0>(rec_result);
         confidence = std::get<1>(rec_result);
         recogMsg   = std::get<2>(rec_result);
 
-        if (!personId.empty() && confidence >= 0.70) {
+        if (!personId.empty() && confidence >= 0.30) {
             _storage->log(personId, confidence);
         } else {
             personId  = "";
