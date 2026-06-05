@@ -61,38 +61,64 @@ export default function HomeScreen() {
     setCameraReady(false);
     setRegisterVisible(true);
   };
+const handleRegister = async () => {
+  if (!personId.trim()) {
+    Alert.alert('Name required', 'Please enter a name or ID.');
+    return;
+  }
 
-  const handleRegister = async () => {
-    if (!personId.trim()) {
-      Alert.alert('Name required', 'Please enter a name or ID before registering.');
-      return;
-    }
-    if (!cameraRef.current) {
-      Alert.alert('Camera not ready', 'Please wait for the camera to initialize.');
-      return;
-    }
+  setRegistering(true);
+  let successCount = 0;
+  const maxAttempts = 3;
 
-    setRegistering(true);
+  for (let i = 0; i < maxAttempts; i++) {
     try {
-      const base64 = await faceRecognitionService.captureFrameBase64(cameraRef.current);
+      const base64 = await faceRecognitionService.captureVisionCameraFrame(cameraRef.current);
       if (!base64) {
-        Alert.alert('Capture failed', 'Could not capture photo. Please try again.');
+        Alert.alert('Capture failed', `Photo ${i + 1} failed.`);
         return;
       }
 
+      Alert.alert(`Photo ${i + 1} captured`);
+
       const result = await faceRecognitionService.registerFace(base64, personId.trim());
       if (result.success) {
-        Alert.alert('Registered!', `${personId.trim()} has been registered successfully.`);
-        setRegisterVisible(false);
+        successCount++;
+        await new Promise((r) => setTimeout(r, 500));
       } else {
-        Alert.alert('Registration failed', result.message || 'No face detected. Please try again.');
+        Alert.alert('Error', `Photo ${i + 1} failed: ${result.message}`);
+        return;
       }
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Something went wrong.');
-    } finally {
-      setRegistering(false);
+      Alert.alert('Error', e?.message ?? 'Capture failed');
+      return;
     }
-  };
+  }
+
+  setRegistering(false);
+  Alert.alert('Success!', `${personId} registered with ${successCount} photos.`);
+  
+  // ← KEY: Properly close modal AND clean up camera
+  await cleanupRegistrationCamera();
+  setRegisterVisible(false);
+};
+
+// Add this cleanup function
+const cleanupRegistrationCamera = async () => {
+  try {
+    // Force camera cleanup by pausing and clearing ref
+    cameraRef.current = null;
+    setCameraReady(false);
+    await new Promise((r) => setTimeout(r, 500)); // Give iOS/Android time to release
+  } catch (e) {
+    console.warn('Cleanup failed:', e);
+  }
+};
+
+const handleCloseModal = useCallback(() => {
+  cleanupRegistrationCamera();
+  setRegisterVisible(false);
+}, []);
 
   const renderItem = ({ item }: { item: AttendanceRecord }) => (
     <View style={styles.card}>
@@ -159,7 +185,7 @@ export default function HomeScreen() {
       />
 
       {/* ── Register modal ── */}
-      <Modal visible={registerVisible} animationType="slide" onRequestClose={() => setRegisterVisible(false)}>
+      <Modal visible={registerVisible} animationType="slide" onRequestClose={handleCloseModal}>
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Register New Face</Text>
 

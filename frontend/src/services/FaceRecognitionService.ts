@@ -2,6 +2,7 @@ import { Camera } from 'react-native-vision-camera';
 import { NativeModules } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import { DatabaseService } from './DatabaseService';
+import { CameraView } from 'expo-camera';
 
 const { FaceAttendanceModule } = NativeModules;
 
@@ -26,15 +27,27 @@ class FaceRecognitionService {
 
   // ─── Capture ──────────────────────────────────────────────────────────────
 
-  async captureVisionCameraFrame(camera: Camera): Promise<string | null> {
-    try {
-      const photo = await camera.takePictureAsync({ base64: true, quality: 0.5 });
-      return photo?.base64 ?? null;
-    } catch (e) {
-      console.warn('[FaceService] Capture failed:', e);
-      return null;
+  async captureVisionCameraFrame(camera: Camera | CameraView): Promise<string | null> {
+  try {
+    // react-native-vision-camera
+    if ('takePhoto' in camera) {
+      const photo = await (camera as Camera).takePhoto({ flash: 'off' });
+      const base64 = await FileSystem.readAsStringAsync(`file://${photo.path}`, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      return base64;
     }
+    // expo-camera
+    if ('takePictureAsync' in camera) {
+      const photo = await (camera as CameraView).takePictureAsync({ base64: true, quality: 0.5 });
+      return photo?.base64 ?? null;
+    }
+    return null;
+  } catch (e) {
+    console.warn('[FaceService] Capture failed:', e);
+    return null;
   }
+}
 
   // ─── Liveness check (legacy stub) ─────────────────────────────────────────
 
@@ -59,7 +72,7 @@ class FaceRecognitionService {
         verified:   r.liveness_verified,
         confidence: r.confidence ?? 0,
         message:    r.liveness_message ?? '',
-        session_id: sessionId ?? '',
+        session_id: _sessionId ?? '',
         progress:   r.liveness_verified ? 1 : r.liveness_failed ? -1 : 0.5,
         recognized: r.recognized,
         person_id:  r.person_id ?? '',
@@ -108,7 +121,11 @@ class FaceRecognitionService {
 
   async resetLiveness(): Promise<void> {
     if (!FaceAttendanceModule) return;
-    try { await FaceAttendanceModule.resetLiveness(); }
+    try { 
+      await new Promise((r) => setTimeout(r, 1000));
+      await FaceAttendanceModule.resetLiveness();
+      console.log('[FaceService] Liveness reset complete');
+    }
     catch (e) { console.warn('[FaceService] Reset failed:', e); }
   }
 

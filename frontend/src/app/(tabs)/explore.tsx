@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 import { faceRecognitionService } from '../../services/FaceRecognitionService';
+import { useFocusEffect } from 'expo-router/build/react-navigation';
 
 type Stage = 'idle' | 'liveness' | 'recognizing' | 'success' | 'failed';
 
@@ -13,6 +14,18 @@ export default function MarkAttendanceScreen() {
   const [message, setMessage] = useState('');
   const [progress, setProgress] = useState(0);
   const isActive = stage === 'idle' || stage === 'liveness';
+  const [cameraKey, setCameraKey] = useState(0);
+
+    // ← Reset camera when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      console.log('[FaceService] Screen focused, reinitializing camera...');
+      setCameraKey((prev) => prev + 1); // Force Camera component to remount
+      return () => {
+        faceRecognitionService.resetLiveness();
+      };
+    }, [])
+  );
 
   const reset = useCallback(() => {
     setStage('idle');
@@ -32,7 +45,7 @@ export default function MarkAttendanceScreen() {
       const base64 = await faceRecognitionService.captureVisionCameraFrame(cameraRef.current);
       if (!base64) {
         attempts++;
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, 800));
         continue;
       }
 
@@ -105,11 +118,16 @@ export default function MarkAttendanceScreen() {
   return (
     <View style={styles.container}>
       <Camera
+        key={cameraKey}
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         device={device}
         isActive={isActive}
-        photo={false}
+        photo={true}
+        photoQualityBalance="speed"
+        onError={(error) => {
+          console.warn('[FaceService] Camera error:', error);
+        }}
       />
 
       <View style={styles.overlayContainer}>
