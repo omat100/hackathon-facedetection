@@ -82,7 +82,8 @@ bool FaceRecognitionEngine::load_models() {
 
     arcface_net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
     arcface_net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
-    expected_dim_ = 128;
+    // CHANGED: buffalo_sc w600k_mbf outputs 512-dim embeddings (vs SFace 128-dim)
+    expected_dim_ = 512;
     std::cout << "Loaded models (dim=" << expected_dim_ << ")" << std::endl;
     return true;
 }
@@ -215,15 +216,10 @@ cv::Mat FaceRecognitionEngine::get_embedding(const cv::Mat& aligned_face) {
         return cv::Mat();
     }
 
-    cv::Mat blob;
-    if (expected_dim_ == 128) {
-        blob = cv::dnn::blobFromImage(aligned_face, 1.0 / 255.0,
-                                      cv::Size(112, 112), cv::Scalar(), false, false);
-    } else {
-        blob = cv::dnn::blobFromImage(aligned_face, 1.0 / 127.5,
-                                      cv::Size(112, 112),
-                                      cv::Scalar(127.5, 127.5, 127.5), false, false);
-    }
+    // buffalo_sc w600k_mbf uses ArcFace preprocessing: (img - 127.5) / 127.5
+    cv::Mat blob = cv::dnn::blobFromImage(aligned_face, 1.0 / 127.5,
+                                          cv::Size(112, 112),
+                                          cv::Scalar(127.5, 127.5, 127.5), false, false);
 
     arcface_net_.setInput(blob);
     cv::Mat embedding = arcface_net_.forward();

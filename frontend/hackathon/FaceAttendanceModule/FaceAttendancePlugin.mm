@@ -29,29 +29,24 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
     self = [super init];
     if (self) {
         @try {
-            // ── Resolve model paths from the app bundle ───────────────────
-            // NOTE: Make sure both .onnx files are added to:
-            //   1. Your Xcode target's "Copy Bundle Resources" build phase
-            //   2. The podspec s.resources line (see FaceAttendanceModule.podspec)
             NSString* yunetPath = [[NSBundle mainBundle]
                 pathForResource:@"face_detection_yunet_2023mar" ofType:@"onnx"];
-            NSString* sfacePath = [[NSBundle mainBundle]
-                pathForResource:@"face_recognition_sface_2021dec" ofType:@"onnx"];
+            // CHANGED: use w600k_mbf (buffalo_sc) instead of SFace
+            NSString* recPath = [[NSBundle mainBundle]
+                pathForResource:@"w600k_mbf" ofType:@"onnx"];
 
-            if (!yunetPath || !sfacePath) {
+            if (!yunetPath || !recPath) {
                 RCTLogError(@"[FaceAttendanceModule] ONNX models not found in bundle! "
-                            @"Add both .onnx files to Copy Bundle Resources in Xcode.");
-                // Don't return early — engines stay nil, initializeModule will report the error
+                            @"Add face_detection_yunet_2023mar.onnx and w600k_mbf.onnx "
+                            @"to Copy Bundle Resources in Xcode.");
                 return self;
             }
 
-            // ── Use Documents dir for writable DB / face JSON ─────────────
             NSString* docsDir = NSSearchPathForDirectoriesInDomains(
                 NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
             NSString* dbPath   = [docsDir stringByAppendingPathComponent:@"attendance.db"];
             NSString* jsonPath = [docsDir stringByAppendingPathComponent:@"face_database.json"];
 
-            // Copy bundled face_database.json to Documents on first launch
             NSString* bundledJSON = [[NSBundle mainBundle]
                 pathForResource:@"face_database" ofType:@"json"];
             NSFileManager* fm = [NSFileManager defaultManager];
@@ -66,14 +61,13 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
             }
 
             RCTLogInfo(@"[FaceAttendanceModule] YuNet  : %@", yunetPath);
-            RCTLogInfo(@"[FaceAttendanceModule] SFace  : %@", sfacePath);
+            RCTLogInfo(@"[FaceAttendanceModule] RecNet : %@", recPath);
             RCTLogInfo(@"[FaceAttendanceModule] DB     : %@", dbPath);
             RCTLogInfo(@"[FaceAttendanceModule] FaceDB : %@", jsonPath);
 
-            // ── Construct C++ engines ─────────────────────────────────────
             _faceEngine = new FaceRecognitionEngine(
                 [yunetPath UTF8String],
-                [sfacePath UTF8String],
+                [recPath   UTF8String],
                 [jsonPath  UTF8String]
             );
             _liveness = new LivenessDetector([yunetPath UTF8String]);
@@ -94,8 +88,6 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
     delete _storage;
 }
 
-// ─── Helper: check all engines are ready ────────────────────────────────────
-
 - (BOOL)enginesReady:(RCTPromiseRejectBlock)reject {
     if (!_faceEngine || !_liveness || !_storage) {
         reject(@"not_initialized",
@@ -107,8 +99,6 @@ RCT_EXPORT_MODULE(FaceAttendanceModule);
     return YES;
 }
 
-// ─── initializeModule ────────────────────────────────────────────────────────
-
 RCT_EXPORT_METHOD(initializeModule:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
@@ -118,12 +108,10 @@ RCT_EXPORT_METHOD(initializeModule:(RCTPromiseResolveBlock)resolve
         reject(@"init_error",
                @"C++ engines failed to initialize. "
                @"Make sure face_detection_yunet_2023mar.onnx and "
-               @"face_recognition_sface_2021dec.onnx are in Copy Bundle Resources.",
+               @"w600k_mbf.onnx are in Copy Bundle Resources.",
                nil);
     }
 }
-
-// ─── processBase64 ───────────────────────────────────────────────────────────
 
 RCT_EXPORT_METHOD(processBase64:(NSString*)base64
                   resolver:(RCTPromiseResolveBlock)resolve
@@ -138,11 +126,9 @@ RCT_EXPORT_METHOD(processBase64:(NSString*)base64
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @try {
-            // FIX: strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
             NSString* clean = base64;
             NSRange commaRange = [base64 rangeOfString:@","];
-            if (commaRange.location != NSNotFound &&
-                [base64 hasPrefix:@"data:"]) {
+            if (commaRange.location != NSNotFound && [base64 hasPrefix:@"data:"]) {
                 clean = [base64 substringFromIndex:commaRange.location + 1];
             }
 
@@ -168,8 +154,6 @@ RCT_EXPORT_METHOD(processBase64:(NSString*)base64
         }
     });
 }
-
-// ─── processFaceImage ────────────────────────────────────────────────────────
 
 RCT_EXPORT_METHOD(processFaceImage:(NSString*)imagePath
                   resolver:(RCTPromiseResolveBlock)resolve
@@ -198,8 +182,6 @@ RCT_EXPORT_METHOD(processFaceImage:(NSString*)imagePath
     });
 }
 
-// ─── Shared frame processing logic ───────────────────────────────────────────
-
 - (void)processFrame:(cv::Mat)frame
             resolver:(RCTPromiseResolveBlock)resolve
             rejecter:(RCTPromiseRejectBlock)reject
@@ -213,14 +195,17 @@ RCT_EXPORT_METHOD(processFaceImage:(NSString*)imagePath
     double confidence = 0.0;
 
     if (livenessVerified) {
-        auto rec_result = _faceEngine->recognize_face(frame);
+        // Use threshold 0.4 — same as Python buffalo_sc version
+        auto rec_result = _faceEngine->recognize_face(frame, 0.4);
         personId   = std::get<0>(rec_result);
         confidence = std::get<1>(rec_result);
-        if (!personId.empty()) {
+
+        if (!personId.empty() && confidence >= 0.4) {
             _storage->log(personId, confidence);
+        } else {
+            personId  = "";
+            confidence = 0.0;
         }
-        // FIX: auto-reset liveness after recognition so the next person
-        // doesn't get blocked by the VERIFIED terminal state
         _liveness->start();
     }
 
@@ -239,8 +224,6 @@ RCT_EXPORT_METHOD(processFaceImage:(NSString*)imagePath
     });
 }
 
-// ─── registerFace ────────────────────────────────────────────────────────────
-
 RCT_EXPORT_METHOD(registerFace:(NSString*)base64
                   personId:(NSString*)personId
                   resolver:(RCTPromiseResolveBlock)resolve
@@ -255,11 +238,9 @@ RCT_EXPORT_METHOD(registerFace:(NSString*)base64
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         @try {
-            // FIX: strip data URI prefix if present
             NSString* clean = base64;
             NSRange commaRange = [base64 rangeOfString:@","];
-            if (commaRange.location != NSNotFound &&
-                [base64 hasPrefix:@"data:"]) {
+            if (commaRange.location != NSNotFound && [base64 hasPrefix:@"data:"]) {
                 clean = [base64 substringFromIndex:commaRange.location + 1];
             }
 
@@ -295,8 +276,6 @@ RCT_EXPORT_METHOD(registerFace:(NSString*)base64
         }
     });
 }
-
-// ─── resetLiveness ───────────────────────────────────────────────────────────
 
 RCT_EXPORT_METHOD(resetLiveness:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
