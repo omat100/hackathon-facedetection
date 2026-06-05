@@ -17,133 +17,103 @@ export interface LivenessResult {
   message: string;
   session_id: string;
   progress: number;
+  recognized: boolean;
+  person_id: string;
 }
 
 class FaceRecognitionService {
-  // ─── Capture ────────────────────────────────────────────────────────────────
+
+  // ─── Capture ──────────────────────────────────────────────────────────────
 
   async captureFrameBase64(camera: CameraView): Promise<string | null> {
     try {
-      const photo = await camera.takePictureAsync({
-        base64: true,
-        quality: 0.5,
-      });
+      const photo = await camera.takePictureAsync({ base64: true, quality: 0.5 });
       return photo?.base64 ?? null;
     } catch (e) {
-      console.warn('Failed to capture frame:', e);
+      console.warn('[FaceService] Capture failed:', e);
       return null;
     }
   }
 
-  // ─── Liveness (legacy stub — kept for API compatibility) ─────────────────
+  // ─── Liveness check (legacy stub) ─────────────────────────────────────────
 
-  async checkLiveness(sessionId?: string): Promise<LivenessResult | null> {
+  async checkLiveness(_sessionId?: string): Promise<LivenessResult | null> {
     return null;
   }
 
-  // ─── Liveness + Recognition via Native Module ────────────────────────────
+  // ─── Main: liveness + recognition in one native call ──────────────────────
 
   async checkLivenessWithBase64(
     base64: string,
     sessionId?: string
   ): Promise<LivenessResult | null> {
     if (!FaceAttendanceModule) {
-      console.warn('[FaceRecognitionService] FaceAttendanceModule not available');
+      console.warn('[FaceService] Native module not available');
       return null;
     }
-
     try {
-      const result = await FaceAttendanceModule.processBase64(base64);
-
-      // result shape from native:
-      // {
-      //   liveness_verified: boolean,
-      //   liveness_failed:   boolean,
-      //   liveness_message:  string,
-      //   person_id:         string,
-      //   confidence:        number,
-      //   recognized:        boolean,
-      // }
-
+      const r = await FaceAttendanceModule.processBase64(base64);
+      console.log('[FaceService] Native result:', JSON.stringify(r));
       return {
-        verified:   result.liveness_verified,
-        confidence: result.confidence ?? 0,
-        message:    result.liveness_message ?? '',
+        verified:   r.liveness_verified,
+        confidence: r.confidence ?? 0,
+        message:    r.liveness_message ?? '',
         session_id: sessionId ?? '',
-        progress:   result.liveness_verified ? 1 : result.liveness_failed ? -1 : 0.5,
+        progress:   r.liveness_verified ? 1 : r.liveness_failed ? -1 : 0.5,
+        recognized: r.recognized,
+        person_id:  r.person_id ?? '',
       };
     } catch (e) {
-      console.warn('[FaceRecognitionService] Liveness check failed:', e);
+      console.warn('[FaceService] Liveness failed:', e);
       return null;
     }
   }
 
-  // ─── Recognition via Native Module ───────────────────────────────────────
+  // ─── Recognition only ─────────────────────────────────────────────────────
 
-  async recognizeFaceWithBase64(
-    base64: string
-  ): Promise<RecognitionResult | null> {
-    if (!FaceAttendanceModule) {
-      console.warn('[FaceRecognitionService] FaceAttendanceModule not available');
-      return null;
-    }
-
+  async recognizeFaceWithBase64(base64: string): Promise<RecognitionResult | null> {
+    if (!FaceAttendanceModule) return null;
     try {
-      const result = await FaceAttendanceModule.processBase64(base64);
-
-      if (!result.recognized || !result.person_id) {
-        return null;
-      }
-
+      const r = await FaceAttendanceModule.processBase64(base64);
+      console.log('[FaceService] Recog result:', JSON.stringify(r));
+      if (!r.recognized || !r.person_id) return null;
       return {
-        person_id:        result.person_id,
-        person_name:      result.person_id, // use person_id as name unless you have a lookup
-        confidence:       result.confidence,
-        liveness_verified: result.liveness_verified,
+        person_id:         r.person_id,
+        person_name:       r.person_id,
+        confidence:        r.confidence,
+        liveness_verified: r.liveness_verified,
       };
     } catch (e) {
-      console.warn('[FaceRecognitionService] Recognition failed:', e);
+      console.warn('[FaceService] Recognition failed:', e);
       return null;
     }
   }
 
-  // ─── Register a face ─────────────────────────────────────────────────────
+  // ─── Register ─────────────────────────────────────────────────────────────
 
   async registerFace(
     base64: string,
     personId: string
   ): Promise<{ success: boolean; message: string }> {
-    if (!FaceAttendanceModule) {
-      return { success: false, message: 'Native module not available' };
-    }
-
+    if (!FaceAttendanceModule) return { success: false, message: 'Module not available' };
     try {
-      const result = await FaceAttendanceModule.registerFace(base64, personId);
-      return result;
+      return await FaceAttendanceModule.registerFace(base64, personId);
     } catch (e: any) {
-      console.warn('[FaceRecognitionService] Register failed:', e);
       return { success: false, message: e?.message ?? 'Unknown error' };
     }
   }
 
-  // ─── Reset liveness state machine ────────────────────────────────────────
+  // ─── Reset liveness ───────────────────────────────────────────────────────
 
   async resetLiveness(): Promise<void> {
     if (!FaceAttendanceModule) return;
-    try {
-      await FaceAttendanceModule.resetLiveness();
-    } catch (e) {
-      console.warn('[FaceRecognitionService] Reset liveness failed:', e);
-    }
+    try { await FaceAttendanceModule.resetLiveness(); }
+    catch (e) { console.warn('[FaceService] Reset failed:', e); }
   }
 
-  // ─── Attendance ──────────────────────────────────────────────────────────
+  // ─── Attendance ───────────────────────────────────────────────────────────
 
-  async markAttendance(
-    personId: string,
-    personName: string,
-    confidence: number
-  ): Promise<void> {
+  async markAttendance(personId: string, personName: string, confidence: number): Promise<void> {
     await DatabaseService.logAttendance(personId, personName, confidence);
   }
 }

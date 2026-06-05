@@ -12,6 +12,7 @@
     "expo-dev-client": "~56.0.18",
     "expo-device": "~56.0.4",
     "expo-font": "~56.0.5",
+    "expo-gl": "~56.0.5",
     "expo-glass-effect": "~56.0.4",
     "expo-image": "~56.0.9",
     "expo-linking": "~56.0.13",
