@@ -1,12 +1,25 @@
-import React, { useState, useCallback } from 'react';
-import { StyleSheet, Text, View, FlatList, TouchableOpacity } from 'react-native';
+import React, { useState, useCallback, useRef } from 'react';
+import {
+  StyleSheet, Text, View, FlatList, TouchableOpacity,
+  Modal, TextInput, Alert, ActivityIndicator,
+} from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useFocusEffect } from 'expo-router';
 import { DatabaseService, AttendanceRecord } from '../../services/DatabaseService';
 import { syncService } from '../../services/SyncService';
+import { faceRecognitionService } from '../../services/FaceRecognitionService';
 
 export default function HomeScreen() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [stats, setStats] = useState({ total: 0, synced: 0, unsynced: 0 });
+
+  // Registration state
+  const [registerVisible, setRegisterVisible] = useState(false);
+  const [personId, setPersonId] = useState('');
+  const [registering, setRegistering] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const cameraRef = useRef<CameraView>(null);
+  const [permission, requestPermission] = useCameraPermissions();
 
   const loadData = useCallback(async () => {
     try {
@@ -36,6 +49,51 @@ export default function HomeScreen() {
     }
   };
 
+  const handleOpenRegister = async () => {
+    if (!permission?.granted) {
+      const { granted } = await requestPermission();
+      if (!granted) {
+        Alert.alert('Permission required', 'Camera access is needed to register a face.');
+        return;
+      }
+    }
+    setPersonId('');
+    setCameraReady(false);
+    setRegisterVisible(true);
+  };
+
+  const handleRegister = async () => {
+    if (!personId.trim()) {
+      Alert.alert('Name required', 'Please enter a name or ID before registering.');
+      return;
+    }
+    if (!cameraRef.current) {
+      Alert.alert('Camera not ready', 'Please wait for the camera to initialize.');
+      return;
+    }
+
+    setRegistering(true);
+    try {
+      const base64 = await faceRecognitionService.captureFrameBase64(cameraRef.current);
+      if (!base64) {
+        Alert.alert('Capture failed', 'Could not capture photo. Please try again.');
+        return;
+      }
+
+      const result = await faceRecognitionService.registerFace(base64, personId.trim());
+      if (result.success) {
+        Alert.alert('Registered!', `${personId.trim()} has been registered successfully.`);
+        setRegisterVisible(false);
+      } else {
+        Alert.alert('Registration failed', result.message || 'No face detected. Please try again.');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Something went wrong.');
+    } finally {
+      setRegistering(false);
+    }
+  };
+
   const renderItem = ({ item }: { item: AttendanceRecord }) => (
     <View style={styles.card}>
       <View style={styles.avatar}>
@@ -62,6 +120,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
+      {/* ── Stats bar ── */}
       <View style={styles.statsBar}>
         <View style={styles.stat}>
           <Text style={styles.statValue}>{stats.total}</Text>
@@ -80,8 +139,12 @@ export default function HomeScreen() {
         <TouchableOpacity style={styles.syncButton} onPress={handleSyncNow}>
           <Text style={styles.syncButtonText}>Sync</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.registerButton} onPress={handleOpenRegister}>
+          <Text style={styles.registerButtonText}>+ Register</Text>
+        </TouchableOpacity>
       </View>
 
+      {/* ── Attendance list ── */}
       <FlatList
         data={records}
         keyExtractor={(item) => item.id.toString()}
@@ -94,6 +157,44 @@ export default function HomeScreen() {
         }
         renderItem={renderItem}
       />
+
+      {/* ── Register modal ── */}
+      <Modal visible={registerVisible} animationType="slide" onRequestClose={() => setRegisterVisible(false)}>
+        <View style={styles.modalContainer}>
+          <Text style={styles.modalTitle}>Register New Face</Text>
+
+          <CameraView
+            ref={cameraRef}
+            style={styles.camera}
+            facing="front"
+            onCameraReady={() => setCameraReady(true)}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Enter name or employee ID"
+            placeholderTextColor="#999"
+            value={personId}
+            onChangeText={setPersonId}
+            autoCapitalize="words"
+          />
+
+          <TouchableOpacity
+            style={[styles.captureButton, (!cameraReady || registering) && styles.captureButtonDisabled]}
+            onPress={handleRegister}
+            disabled={!cameraReady || registering}
+          >
+            {registering
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={styles.captureButtonText}>Capture & Register</Text>
+            }
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.cancelButton} onPress={() => setRegisterVisible(false)}>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -121,8 +222,16 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 8,
+    marginRight: 6,
   },
   syncButtonText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  registerButton: {
+    backgroundColor: '#34C759',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  registerButtonText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   listContainer: { padding: 12, paddingTop: 0, flexGrow: 1 },
   card: {
     flexDirection: 'row',
@@ -138,12 +247,8 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#007AFF',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#007AFF', justifyContent: 'center', alignItems: 'center',
   },
   avatarText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   info: { flex: 1, marginLeft: 12 },
@@ -160,4 +265,31 @@ const styles = StyleSheet.create({
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 80 },
   emptyTitle: { fontSize: 18, fontWeight: 'bold', color: '#999' },
   emptySubtitle: { fontSize: 14, color: '#bbb', marginTop: 6 },
+
+  // Modal
+  modalContainer: {
+    flex: 1, backgroundColor: '#000', alignItems: 'center',
+    justifyContent: 'center', padding: 24,
+  },
+  modalTitle: {
+    color: '#fff', fontSize: 22, fontWeight: 'bold', marginBottom: 20,
+  },
+  camera: {
+    width: 280, height: 320, borderRadius: 16, overflow: 'hidden', marginBottom: 24,
+  },
+  input: {
+    width: '100%', backgroundColor: '#1c1c1e', color: '#fff',
+    borderRadius: 10, padding: 14, fontSize: 16, marginBottom: 16,
+    borderWidth: 1, borderColor: '#333',
+  },
+  captureButton: {
+    width: '100%', backgroundColor: '#34C759',
+    paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 12,
+  },
+  captureButtonDisabled: { backgroundColor: '#555' },
+  captureButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  cancelButton: {
+    width: '100%', paddingVertical: 14, alignItems: 'center',
+  },
+  cancelButtonText: { color: '#FF3B30', fontSize: 16 },
 });

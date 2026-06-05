@@ -9,22 +9,25 @@
 
 class FaceRecognitionEngine {
 public:
-    // Accepts explicit paths to ONNX models and optional DB path
     FaceRecognitionEngine(const std::string& yunet_path,
-                          const std::string& sface_path,
+                          const std::string& recog_path,
                           const std::string& db_path = "face_database.json");
     ~FaceRecognitionEngine();
 
     std::pair<bool, std::string> register_face(const cv::Mat& image, const std::string& person_id);
-    std::tuple<std::string, double, std::string> recognize_face(const cv::Mat& image, double threshold = 0.3);
+    std::tuple<std::string, double, std::string> recognize_face(const cv::Mat& image, double threshold = 0.55);
+
+    // Max embeddings stored per person
+    static constexpr int MAX_EMBEDDINGS_PER_PERSON = 8;
 
 private:
     cv::dnn::Net yunet_;
-    cv::dnn::Net arcface_net_;
-    std::unordered_map<std::string, cv::Mat> database_;
+    cv::dnn::Net recog_net_;
+    // person_id → list of embeddings (multiple per person)
+    std::unordered_map<std::string, std::vector<cv::Mat>> database_;
     std::string db_path_;
     std::string yunet_path_;
-    std::string sface_path_;
+    std::string recog_path_;
     int expected_dim_;
 
     bool load_models();
