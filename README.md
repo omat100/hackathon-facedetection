@@ -1,4 +1,5 @@
 # Face Recognition Attendance
+# Face Recognition Attendance
 
 On-device face recognition and liveness detection for attendance tracking. No server required — everything runs locally using OpenCV's DNN module with ONNX models. Supports both **iOS** and **Android** via a shared C++ backend.
 
