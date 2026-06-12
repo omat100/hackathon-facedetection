@@ -1,8 +1,25 @@
-# Face Recognition Attendance — iOS
+# Face Recognition Attendance
 
-On-device face recognition and liveness detection for attendance tracking. No server required — everything runs locally on your iPhone using OpenCV's DNN module with ONNX models.
+On-device face recognition and liveness detection for attendance tracking. No server required — everything runs locally using OpenCV's DNN module with ONNX models. Supports both **iOS** and **Android** via a shared C++ backend.
 
-## Architecture
+## Build
+
+| Platform | Status | Download |
+|----------|--------|----------|
+| iOS | Ready | [Download Link](https://expo.dev/artifacts/eas/dDWJpHuToU476LYVi7VETq.tar.gz) |
+| Android | Ready | `npx expo run:android` |
+
+## Shared C++ Engine
+
+All three C++ components are shared across iOS and Android:
+
+- **LivenessDetector** — head-turn + smile detection using YuNet 5-point facial landmarks (no blink detection, since YuNet only gives single eye points)
+- **FaceRecognitionEngine** — SFace embedding extraction + cosine similarity search against a known database
+- **AttendanceStorage** — SQLite database for attendance logs, synced and unsynced records
+
+Every frame goes through liveness first; only when liveness is verified does the face get recognized. No cloud, no network, no Flask server.
+
+## iOS Architecture
 
 ```
 React Native (Expo)
@@ -14,33 +31,69 @@ C++ Engines — LivenessDetector → FaceRecognitionEngine → AttendanceStorage
 OpenCV 4.3.0 + YuNet ONNX + SFace ONNX
 ```
 
-Three C++ components do all the heavy lifting on a background thread:
-
-- **LivenessDetector** — head-turn + smile detection using YuNet 5-point facial landmarks (no blink detection, since YuNet only gives single eye points)
-- **FaceRecognitionEngine** — SFace embedding extraction + cosine similarity search against a known database
-- **AttendanceStorage** — SQLite database for attendance logs, synced and unsynced records
-
-Every frame goes through liveness first; only when liveness is verified does the face get recognized. No cloud, no network, no Flask server.
-
-## Project Structure
+### iOS Project Structure
 
 ```
-frontend/hackathon/
+frontend/
 ├── FaceAttendanceModule/           # iOS native bridge (CocoaPod)
 │   ├── FaceAttendancePlugin.mm     # Obj-C++ RCTBridgeModule — JS bridge entry point
 │   ├── FaceAttendanceModule.podspec
 │   ├── index.js                    # JS wrapper (also importable directly)
-│   ├── package.json
 │   ├── opencv2.framework/          # Vendored OpenCV 4.3.0 (5-arch universal binary)
-│   └── cpp/
-│       ├── face_recognition.{hpp,cpp}   # SFace embedding + recognition engine
-│       ├── liveness_detector.{hpp,cpp}  # Smile + head-turn liveness
-│       ├── storage.{hpp,cpp}            # SQLite attendance storage
-│       ├── face_detection_yunet_2023mar.onnx   # Face detection model
-│       ├── face_recognition_sface_2021dec.onnx # Face recognition model
-│       ├── det_500m.onnx                    # Alternative lightweight detector
-│       ├── w600k_mbf.onnx                   # Alternative recognition model
-│       └── face_database.json               # Pre-seeded person embeddings
+│   └── cpp/                        # Shared C++ engines
+```
+
+## Android Architecture
+
+```
+React Native (Expo)
+    ↓
+FaceAttendanceModule (Kotlin — ReactContextBaseJavaModule)
+    ↓
+JNI → FaceAttendanceModule.cpp (C++ JNI bridge)
+    ↓
+C++ Engines — LivenessDetector → FaceRecognitionEngine → AttendanceStorage (SQLite)
+    ↓
+OpenCV 4.5.5 + YuNet ONNX + SFace ONNX
+```
+
+### Android Project Structure
+
+```
+frontend/
+├── android/
+│   ├── app/
+│   │   ├── build.gradle            # Android app build config with CMake
+│   │   ├── CMakeLists.txt          # Native C++ build (OpenCV + engines + SQLite)
+│   │   └── src/main/
+│   │       ├── AndroidManifest.xml # Camera + Internet permissions
+│   │       ├── assets/models/      # ONNX model files (bundled in APK)
+│   │       │   ├── face_detection_yunet_2023mar.onnx
+│   │       │   ├── face_recognition_sface_2021dec.onnx
+│   │       │   └── lbfmodel.yaml
+│   │       ├── java/com/anonymous/hackathon/
+│   │       │   ├── MainActivity.kt           # React Native activity
+│   │       │   ├── MainApplication.kt        # Registers FaceAttendancePackage
+│   │       │   ├── FaceAttendanceModule.kt   # JNI bridge — exposes native methods to JS
+│   │       │   └── FaceAttendancePackage.kt  # React Native package registration
+│   │       ├── jniLibs/arm64-v8a/            # Prebuilt .so files
+│   │       │   ├── libface_attendance_wrapper.so  # Compiled C++ engine wrapper
+│   │       │   └── libopencv_java4.so             # Prebuilt OpenCV for Android
+│   │       └── res/                           # Android resources (icons, themes, splash)
+│   ├── build.gradle
+│   └── settings.gradle
+├── cpp/                                     # Shared C++ (used by both platforms)
+│   ├── FaceAttendanceModule.cpp             # JNI entry point — extern "C" JNI functions
+│   ├── face_recognition.{hpp,cpp}           # SFace embedding + recognition
+│   ├── liveness_detector.{hpp,cpp}          # Smile + head-turn liveness
+│   ├── storage.{hpp,cpp}                    # SQLite attendance storage
+│   ├── face_detection_yunet_2023mar.onnx    # YuNet face detection model
+│   ├── face_recognition_sface_2021dec.onnx  # SFace recognition model
+│   ├── face_landmark.onnx                   # 68-point landmark model for liveness
+│   ├── lbfmodel.yaml                        # LBF landmark model (fallback)
+│   ├── face_database.json                   # Registered face embeddings
+│   ├── attendance.db                        # SQLite attendance records (runtime)
+│   └── sqlite3.{c,h}                        # Vendored SQLite amalgamation
 ├── src/
 │   ├── services/
 │   │   ├── FaceRecognitionService.ts    # JS facade — wraps native module calls
@@ -51,25 +104,132 @@ frontend/hackathon/
 └── app.json
 ```
 
+### Android Native Module — Kotlin JNI Bridge
+
+**`FaceAttendanceModule.kt`** is a `ReactContextBaseJavaModule` that exposes five methods to JavaScript via `@ReactMethod` annotations:
+
+| Method | JNI Native Call | Description |
+|--------|----------------|-------------|
+| `processBase64(base64)` | `nativeProcessBase64` | Decodes base64 frame → runs liveness + recognition → returns JSON result |
+| `registerFace(base64, personId)` | `nativeRegisterFace` | Detects face → extracts SFace embedding → stores in `face_database.json` |
+| `resetLiveness()` | `nativeResetLiveness` | Resets liveness state machine for a new session |
+| `getStats()` | `nativeGetStats` | Returns attendance counts (total / synced / unsynced) |
+| `initializeModule` (implicit) | `nativeInit` | Copies models from assets → initializes all C++ engines (called lazily) |
+
+On first call, the module copies ONNX models from `assets/models/` to internal storage, then calls `nativeInit(modelDir, dbPath)` to create all three C++ engine instances.
+
+### C++ JNI Wrapper — `FaceAttendanceModule.cpp`
+
+This file sits in `frontend/cpp/` and is compiled via CMake for Android (also used as a reference for iOS). It provides `extern "C"` JNI functions that match the Kotlin `external` declarations:
+
+```cpp
+JNIEXPORT jboolean JNICALL Java_com_anonymous_hackathon_FaceAttendanceModule_nativeInit(...)
+JNIEXPORT jstring  JNICALL Java_com_anonymous_hackathon_FaceAttendanceModule_nativeProcessBase64(...)
+JNIEXPORT jstring  JNICALL Java_com_anonymous_hackathon_FaceAttendanceModule_nativeRegisterFace(...)
+JNIEXPORT void     JNICALL Java_com_anonymous_hackathon_FaceAttendanceModule_nativeResetLiveness(...)
+JNIEXPORT jstring  JNICALL Java_com_anonymous_hackathon_FaceAttendanceModule_nativeGetStats(...)
+JNIEXPORT void     JNICALL Java_com_anonymous_hackathon_FaceAttendanceModule_nativeDestroy(...)
+```
+
+Key implementation details:
+- Base64 decoding is done in C++ (no Android Bitmap dependency)
+- Each `processBase64` call: decode → `cv::imdecode` → run liveness → if verified, run recognition → log to SQLite → return JSON
+- State is held in global pointers (`g_face_engine`, `g_liveness`, `g_storage`) — re-initialized on each `nativeInit`
+
+### CMake Build — `android/app/CMakeLists.txt`
+
+```cmake
+cmake_minimum_required(VERSION 3.18.1)
+set(CMAKE_CXX_STANDARD 17)
+
+# Include shared C++ sources + OpenCV headers
+add_library(face_attendance_wrapper SHARED
+    ../../cpp/FaceAttendanceModule.cpp
+    ../../cpp/face_recognition.cpp
+    ../../cpp/liveness_detector.cpp
+    ../../cpp/storage.cpp
+    ../../cpp/sqlite3.c
+)
+
+# Link against prebuilt libopencv_java4.so
+target_link_libraries(face_attendance_wrapper PRIVATE opencv_java4 ${LOG_LIB} ${JNIGRAPHICS_LIB})
+```
+
+- OpenCV is **not** compiled from source — `libopencv_java4.so` is prebuilt and placed in `jniLibs/arm64-v8a/`
+- The wrapper produces `libface_attendance_wrapper.so`, also in `jniLibs/`
+- Both native libraries are loaded in the Kotlin `companion object` block:
+  ```kotlin
+  init {
+      System.loadLibrary("face_attendance_wrapper")
+  }
+  ```
+
+### FaceAttendancePackage
+
+Registered in `MainApplication.kt`:
+
+```kotlin
+class MainApplication : Application(), ReactApplication {
+    override val reactHost: ReactHost by lazy {
+        ExpoReactHostFactory.getDefaultReactHost(
+            packageList = PackageList(this).packages.apply {
+                add(FaceAttendancePackage())  // Custom package registration
+            }
+        )
+    }
+}
+```
+
+`FaceAttendancePackage.kt` simply returns the `FaceAttendanceModule` instance from `createNativeModules`.
+
+### Android App Configuration
+
+- **Package**: `com.anonymous.hackathon` (namespace in `build.gradle`)
+- **Min SDK**: Set via `rootProject.ext.minSdkVersion`
+- **Target SDK**: Set via `rootProject.ext.targetSdkVersion`
+- **ABI filters**: `arm64-v8a`, `armeabi-v7a` (via `externalNativeBuild.cmake.abiFilters`)
+- **C++ STL**: `c++_shared` (required by OpenCV)
+- **Permissions**: `CAMERA`, `INTERNET`, `RECORD_AUDIO`, `READ/WRITE_EXTERNAL_STORAGE` (maxSdkVersion=32)
+
+### Android Setup
+
+```bash
+cd frontend
+npm install
+npx expo run:android --device
+```
+
+The first build compiles the C++ engines via CMake, which takes a few minutes. Subsequent builds are incremental.
+
+### Android Build Notes
+
+- **OpenCV**: Prebuilt `libopencv_java4.so` (4.5.5) is used — no OpenCV build from source required
+- **Models**: ONNX files are stored in `android/app/src/main/assets/models/` and copied to internal storage on first module initialization
+- **Face Database**: `face_database.json` is stored in the app's internal `filesDir/face_attendance/` directory, writable for face registration
+- **Liveness Models**: Uses `face_landmark.onnx` (68-point facial landmarks) for EAR/smile/head-turn computation, distinct from the iOS version's landmark model
+
 ## Setup
 
 ### Prerequisites
-- Xcode 15+
-- CocoaPods (Homebrew version recommended)
+- **iOS**: Xcode 15+, CocoaPods (Homebrew version recommended), iPhone connected via USB
+- **Android**: Android Studio, Android SDK (API 24+), Android device or emulator with camera
 - Node.js 18+
-- An iPhone connected via USB
+- Expo CLI (`npx expo`)
 
 ### Quick Start
 
 ```bash
-cd frontend/hackathon
+cd frontend
 npm install
+# For iOS
 npx expo run:ios --device
+# For Android
+npx expo run:android --device
 ```
 
 The first build takes a while (compiling C++ + OpenCV). Subsequent builds are faster.
 
-### If pod install fails
+### If pod install fails (iOS)
 
 Expo SDK 56 bundles an older CocoaPods that doesn't support the `visionos` deployment target in `react-native-safe-area-context`. Use the Homebrew-installed pod instead:
 
@@ -153,3 +313,6 @@ Registration stores normalized SFace embeddings (512-d vectors) in `face_databas
 | Build fails: `No visible @interface` | The Obj-C ARC bridge file needs `#import <React/RCTBridgeModule.h>` and a primary `@interface` declaration |
 | Recognition always returns empty | Check `face_database.json` exists in `Documents/` on device; verify the ONNX model paths are correct |
 | Liveness never passes | The state machine expects a sequence: neutral → smile → head turn. Make sure `resetLiveness()` is called before each session. Face must be well-lit and roughly centered |
+| Android: `UnsatisfiedLinkError` | Ensure `jniLibs/arm64-v8a/` contains both `libface_attendance_wrapper.so` and `libopencv_java4.so` |
+| Android: Models not found | Check `android/app/src/main/assets/models/` has the `.onnx` files; the module copies them to internal storage on first call |
+| Android: Camera permission denied | Grant camera permission in Settings or reinstall the app and accept the prompt |
